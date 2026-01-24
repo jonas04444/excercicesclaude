@@ -1,3 +1,21 @@
+"""```
+
+2. **Contrainte 1** : Chaque voyage doit être affecté à **exactement 1 service**
+
+3. **Contrainte 2** : Pas de chevauchement dans un même service (si deux voyages sont sur le même service, ils ne doivent pas se chevaucher)
+
+**Indice pour le chevauchement :**
+Deux voyages se chevauchent si :
+
+debut_A < fin_B  ET  debut_B < fin_A
+
+PAUSE_MIN = 5
+
+def conflit(v1, v2):
+    # Retourne True si v1 et v2 ne peuvent pas être sur le même service
+    # (chevauchement OU pas assez de pause entre les deux)
+
+```"""
 from ortools.sat.python import cp_model
 
 model = cp_model.CpModel()
@@ -26,25 +44,6 @@ x = {}
 for v in range(len(voyages)):
     for s in range(nb_services):
         x[v, s] = model.NewBoolVar(f"voyage_{v}_service_{s}")
-
-"""```
-
-2. **Contrainte 1** : Chaque voyage doit être affecté à **exactement 1 service**
-
-3. **Contrainte 2** : Pas de chevauchement dans un même service (si deux voyages sont sur le même service, ils ne doivent pas se chevaucher)
-
-**Indice pour le chevauchement :**
-Deux voyages se chevauchent si :
-
-debut_A < fin_B  ET  debut_B < fin_A
-
-PAUSE_MIN = 5
-
-def conflit(v1, v2):
-    # Retourne True si v1 et v2 ne peuvent pas être sur le même service
-    # (chevauchement OU pas assez de pause entre les deux)
-
-```"""
 
 for v in range(len(voyages)):
     model.Add(sum(x[v, s] for s in range(nb_services)) == 1)
