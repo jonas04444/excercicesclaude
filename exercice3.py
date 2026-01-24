@@ -45,9 +45,11 @@ def afficher_commande(commande, menu):
     pass
 
 def commandes_par_statut(commandes, statut):
+    resultat = []
     for commande in commandes:
         if commande["statut"] == statut:
-            return commande["statut"]
+            resultat.append(commande)
+    return resultat
 
 def chiffre_affaires(commandes, menu):
     ca = 0
@@ -66,11 +68,27 @@ def client_fidele(commandes):
             compteur[client] += 1
         else:
             compteur[client] = 1
-
     return compteur
+
+def plat_populaire(commandes):
+    compteur = {}
+    for commande in commandes:
+        for plat in commande["plats"]:
+
+            if plat in compteur:
+                compteur[plat] += 1
+            else:
+                compteur[plat] = 1
+    return compteur
+
 commande1 = calculer_total(commandes[1]["plats"], menu)
 status = commandes_par_statut(commandes, "en cours")
 CA = chiffre_affaires(commandes, menu)
-client = max(client_fidele(commandes))
-
+compteur = client_fidele(commandes)
+client = max(compteur, key=compteur.get)
 print(client)
+
+meilleurplat = plat_populaire(commandes)
+print(meilleurplat)
+best = max(meilleurplat, key=meilleurplat.get)
+print(best)
