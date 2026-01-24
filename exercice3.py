@@ -59,7 +59,6 @@ def chiffre_affaires(commandes, menu):
             ca += compte
     return ca
 
-
 def client_fidele(commandes):
     compteur = {}
     for commande in commandes:
