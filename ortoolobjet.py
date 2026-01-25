@@ -60,7 +60,6 @@ voyages = [
     Voyage("C00A1", 2, "CEN18", "GOGAR", "04:30", "04:48"),
     Voyage("C00A1", 3, "GOGAR", "CEN05", "05:30", "05:51"),
     Voyage("C00A1", 4, "CEN18", "GOGAR", "05:00", "05:18"),
-    Voyage("C0068", 5, "JUMA2", "CEN05", "16:30", "17:02"),
     Voyage("C00A1", 5, "GOGAR", "CEN05", "06:00", "06:21"),
     Voyage("C00A1", 6, "CEN18", "GOGAR", "05:30", "05:48"),
     Voyage("C00A1", 7, "GOGAR", "CEN05", "06:30", "06:51"),
@@ -68,12 +67,16 @@ voyages = [
     Voyage("C00A1", 9, "GOGAR", "CEN05", "07:00", "07:21"),
 ]
 
-nb_services = 3
+nb_services = 2
 pause_min = 5
 
 def se_chevauchent(v1,v2):
     return voyages[v1].heure_fin + pause_min > voyages[v2].heure_debut and \
            voyages[v2].heure_fin + pause_min > voyages[v1].heure_debut
+
+def continuite_geo(v1,v2):
+    return voyages[v2].depart[:3] == voyages[v1].arrivee[:3]
+
 
 x = {}
 for v in range(len(voyages)):
@@ -88,7 +91,17 @@ for v1 in range(len(voyages)):
         if se_chevauchent(v1, v2):
             for s in range(nb_services):
                 model.Add(x[v1, s] + x[v2, s] <= 1)
-
+"""
+for v1 in range(len(voyages)):
+    for v2 in range(len(voyages)):
+        if v1 != v2:
+            # v1 peut DIRECTEMENT précéder v2 ?
+            if voyages[v1].heure_fin + pause_min <= voyages[v2].heure_debut:
+                # Mais PAS de continuité géo → interdit
+                if not continuite_geo(v1, v2):
+                    for s in range(nb_services):
+                        model.Add(x[v1, s] + x[v2, s] <= 1)
+"""
 solver = cp_model.CpSolver()
 status = solver.Solve(model)
 
@@ -99,3 +112,11 @@ if status == cp_model.OPTIMAL:
             if solver.Value(x[v, s]) == 1:
                 voyage = voyages[v]
                 print(f"  Voyage {v}: {voyage.depart} → {voyage.arrivee} ({voyage.heure_debut}min - {voyage.heure_fin}min)")
+# Après la boucle de contrainte géographique, ajoute :
+print("Contraintes géo ajoutées :")
+for v1 in range(len(voyages)):
+    for v2 in range(len(voyages)):
+        if v1 != v2:
+            if voyages[v1].heure_fin + pause_min <= voyages[v2].heure_debut:
+                if not continuite_geo(v1, v2):
+                    print(f"  v{v1} ({voyages[v1].arrivee}) et v{v2} ({voyages[v2].depart}) incompatibles")
