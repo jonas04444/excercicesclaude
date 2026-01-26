@@ -70,7 +70,7 @@ for r in reunions:
 salle_reunions= {}
 for v in range(len(reunions_obj)):
     for s in range(nb_salles):
-        salle_reunions[v,s] = model.NewBollVar(f"salle_reunions_{v}_{s}")
+        salle_reunions[v,s] = model.NewBoolVar(f"salle_reunions_{v}_{s}")
 
 solver = cp_model.CpSolver()
 status = solver.Solve(model)
@@ -78,7 +78,7 @@ status = solver.Solve(model)
 if status == cp_model.OPTIMAL:
     for s in range(nb_salles):
         print(f"Salut {s}")
-        for v in range(reunions_obj):
+        for v in range(len(reunions_obj)):
             if solver.Value(salle_reunions[v,s]) == 1:
                 meeting = reunions_obj[v]
                 print(f"{meeting.departement} - {meeting.numero}")
