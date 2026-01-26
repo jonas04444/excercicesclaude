@@ -77,6 +77,14 @@ def se_chevauchent(v1,v2):
 def continuite_geo(v1,v2):
     return voyages[v2].depart[:3] == voyages[v1].arrivee[:3]
 
+y = {}
+for v1 in range(len(voyages)):
+    for v2 in range(len(voyages)):
+        if v1 != v2:
+            # v1 peut précéder v2 dans le temps ?
+            if voyages[v1].heure_fin + pause_min <= voyages[v2].heure_debut:
+                for s in range(nb_services):
+                    y[v1, v2, s] = model.NewBoolVar(f"succ_{v1}_{v2}_{s}")
 
 x = {}
 for v in range(len(voyages)):
@@ -91,7 +99,7 @@ for v1 in range(len(voyages)):
         if se_chevauchent(v1, v2):
             for s in range(nb_services):
                 model.Add(x[v1, s] + x[v2, s] <= 1)
-"""
+
 for v1 in range(len(voyages)):
     for v2 in range(len(voyages)):
         if v1 != v2:
@@ -101,7 +109,7 @@ for v1 in range(len(voyages)):
                 if not continuite_geo(v1, v2):
                     for s in range(nb_services):
                         model.Add(x[v1, s] + x[v2, s] <= 1)
-"""
+
 solver = cp_model.CpSolver()
 status = solver.Solve(model)
 
