@@ -72,6 +72,15 @@ for v in range(len(reunions_obj)):
     for s in range(nb_salles):
         salle_reunions[v,s] = model.NewBoolVar(f"salle_reunions_{v}_{s}")
 
+for v in range(len(reunions_obj)):
+    model.Add(sum(salle_reunions[v,s] for s in range(nb_salles)) == 1)
+
+for r1 in range(len(reunions_obj)):
+    for r2 in range(r1+1, len(reunions_obj)):
+        if chevauchement(r1,r2):
+            for s in range(nb_salles):
+                model.Add(salle_reunions[r1,s] + salle_reunions[r2,s] <= 1)
+
 solver = cp_model.CpSolver()
 status = solver.Solve(model)
 
