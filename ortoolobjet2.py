@@ -39,8 +39,8 @@ reunions = [
     ("Finance", 2, "13:00", "14:00"),
 ]
 
-nb_salles = 3
-pause_min = 10
+nb_salles = 4
+pause_min = 5
 
 class Reunion:
     def __init__(self, departement, numero, heure_debut, heure_fin):
@@ -80,14 +80,29 @@ for r1 in range(len(reunions_obj)):
         if chevauchement(r1,r2):
             for s in range(nb_salles):
                 model.Add(salle_reunions[r1,s] + salle_reunions[r2,s] <= 1)
+for r1 in range(len(reunions_obj)):
+    for r2 in range(r1 + 1, len(reunions_obj)):
+        if reunions_obj[r1].departement == reunions_obj[r2].departement:
+            # r1 et r2 doivent être dans la même salle
+            # Pour chaque salle : x[r1, s] == x[r2, s]
+            for s in range(nb_salles):
+                model.Add(salle_reunions[r1, s] == salle_reunions[r2, s])
+print("=== Test des objets ===")
+for i, r in enumerate(reunions_obj):
+    print(f"  {i}: {r.departement}-{r.numero} ({r.heure_debut} - {r.heure_fin})")
+print()
 
 solver = cp_model.CpSolver()
 status = solver.Solve(model)
 
 if status == cp_model.OPTIMAL:
     for s in range(nb_salles):
-        print(f"Salut {s}")
+        print(f"statut {s}")
         for v in range(len(reunions_obj)):
             if solver.Value(salle_reunions[v,s]) == 1:
                 meeting = reunions_obj[v]
                 print(f"{meeting.departement} - {meeting.numero}")
+elif status == cp_model.INFEASIBLE:
+    print("❌ Pas de solution possible")
+else:
+    print(f"Status: {status}")
