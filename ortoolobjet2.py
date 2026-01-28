@@ -87,21 +87,30 @@ for r1 in range(len(reunions_obj)):
             # Pour chaque salle : x[r1, s] == x[r2, s]
             for s in range(nb_salles):
                 model.Add(salle_reunions[r1, s] == salle_reunions[r2, s])
-print("=== Test des objets ===")
-for i, r in enumerate(reunions_obj):
-    print(f"  {i}: {r.departement}-{r.numero} ({r.heure_debut} - {r.heure_fin})")
-print()
+
+salles_utilisees = []
+for s in range(nb_salles):
+    est_utilisee = model.NewBoolVar(f"salle_{s}_utilisee")
+
+    # est_utilisee = 1 si au moins une réunion dans cette salle
+    reunions_dans_salle = [salle_reunions[v, s] for v in range(len(reunions_obj))]
+    model.AddMaxEquality(est_utilisee, reunions_dans_salle)
+
+    salles_utilisees.append(est_utilisee)
+model.Minimize(sum(salles_utilisees))
 
 solver = cp_model.CpSolver()
 status = solver.Solve(model)
 
 if status == cp_model.OPTIMAL:
     for s in range(nb_salles):
-        print(f"statut {s}")
+        print(f"=== Salle {s+1} ===")
         for v in range(len(reunions_obj)):
             if solver.Value(salle_reunions[v,s]) == 1:
                 meeting = reunions_obj[v]
-                print(f"{meeting.departement} - {meeting.numero}")
+                debut = meeting.minutes_to_time(reunions_obj[v].heure_debut)
+                fin = meeting.minutes_to_time(reunions_obj[v].heure_fin)
+                print(f"{meeting.departement}-{meeting.numero}:  {debut} - {fin}")
 elif status == cp_model.INFEASIBLE:
     print("❌ Pas de solution possible")
 else:
