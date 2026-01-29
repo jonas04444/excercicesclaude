@@ -33,8 +33,6 @@ Nombre de services utilisés : 3
   L3-2: SUD → GARE (07:15 - 07:45)
   L3-3: GARE → DEPOT (08:00 - 08:30)"""
 
-
-
 from ortools.sat.python import cp_model
 
 model = cp_model.CpModel()
@@ -75,7 +73,60 @@ class Voyage:
         m = minutes % 60
         return f"{h:02d}:{m:02d}"
 
+def chevauchement(v1, v2):
+    return objet_voyages[v1].heure_fin + pause_min > objet_voyages[v2].heure_debut and \
+           objet_voyages[v2].heure_fin + pause_min > objet_voyages[v1].heure_debut
+
 objet_voyages = []
 
 for voyage in voyages:
     objet_voyages.append(Voyage(*voyage))
+
+service= {}
+for v in range(len(objet_voyages)):
+    for s in range(nb_services):
+        service[v, s] = model.NewBoolVar(f"voyage_{v}_service_{s}")
+
+for v in range(len(objet_voyages)):
+    model.Add(sum(service[v, s] for s in range(nb_services)) == 1)
+
+"""for v1 in range(len(objet_voyages)):
+    for v2 in range(len(objet_voyages)):
+        if v1 != v2:
+            temps_ok = objet_voyages[v1].heure_fin + pause_min <= objet_voyages[v2].heure_debut
+            geo_ok = objet_voyages[v1].arrivee[:3] == objet_voyages[v2].depart[:3]
+            if temps_ok and not geo_ok:
+                for s in range(nb_services):
+                    model.Add(service[v1,s] + service[v2,s] <=1)"""
+
+for v1 in range(len(objet_voyages)):
+    for v2 in range(v1 + 1, len(objet_voyages)):
+        if chevauchement(v1, v2):
+            for s in range(nb_services):
+                model.Add(service[v1, s] + service[v2, s] <= 1)
+
+"""print("=== Paires interdites (géo) ===")
+for v1 in range(len(objet_voyages)):
+    for v2 in range(len(objet_voyages)):
+        if v1 != v2:
+            temps_ok = objet_voyages[v1].heure_fin + pause_min <= objet_voyages[v2].heure_debut
+            geo_ok = objet_voyages[v1].arrivee == objet_voyages[v2].depart
+            if temps_ok and not geo_ok:
+                print(f"  v{v1} ({objet_voyages[v1].arrivee}) → v{v2} ({objet_voyages[v2].depart})")"""
+
+solver = cp_model.CpSolver()
+status = solver.Solve(model)
+
+if status == cp_model.OPTIMAL:
+    for s in range(nb_services):
+        print(f"=== service {s+1} ===")
+        for v in range(len(objet_voyages)):
+            if solver.Value(service[v,s]) == 1:
+                meeting = objet_voyages[v]
+                debut = meeting.minutes_to_time(objet_voyages[v].heure_debut)
+                fin = meeting.minutes_to_time(objet_voyages[v].heure_fin)
+                print(f"{meeting.ligne}-{meeting.numero}:  {debut} - {fin}")
+elif status == cp_model.INFEASIBLE:
+    print("❌ Pas de solution possible")
+else:
+    print(f"Status: {status}")
