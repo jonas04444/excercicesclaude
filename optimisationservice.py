@@ -52,3 +52,43 @@ voyages = [
 ]
 
 pause_min = 10
+
+class Service:
+    def __init__(self, id, debut, fin, voyages_assignes):
+        self.id = id
+        self.debut = self.time_to_minutes(debut)
+        self.fin = self.time_to_minutes(fin)
+        self.voyages_assignes = voyages_assignes
+
+    def time_to_minutes(self, heure_str):
+        h, m = heure_str.split(':')
+        return int(h) * 60 + int(m)
+
+    def minutes_to_time(self, minutes):
+        h = minutes // 60
+        m = minutes % 60
+        return f"{h:02d}:{m:02d}"
+
+class Voyage:
+    def __init__(self, ligne, num, debut, fin, h_debut, h_fin):
+        self.ligne = ligne
+        self.num = num
+        self.debut = debut
+        self.fin = fin
+        self.h_debut = self.time_to_minutes(h_debut)
+        self.h_fin = self.time_to_minutes(h_fin)
+
+    def time_to_minutes(self, heure_str):
+        h, m = heure_str.split(':')
+        return int(h) * 60 + int(m)
+
+    def minutes_to_time(self, minutes):
+        h = minutes // 60
+        m = minutes % 60
+        return f"{h:02d}:{m:02d}"
+
+voyages_objets = []
+
+for voyage in voyages:
+    voyages_objets.append(Voyage(*voyage))
+
