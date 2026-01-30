@@ -87,8 +87,18 @@ class Voyage:
         m = minutes % 60
         return f"{h:02d}:{m:02d}"
 
+def chevauchement(v1, v2):
+    return voyages_objets[v1].heure_fin + pause_min > voyages_objets[v2].heure_debut and \
+           voyages_objets[v2].heure_fin + pause_min > voyages_objets[v1].heure_debut
+
 voyages_objets = []
 
 for voyage in voyages:
     voyages_objets.append(Voyage(*voyage))
 
+services_objets = []
+for service in services:
+    services_objets.append(Service(service["id"], service["debut"], service["fin"], service["voyages_assignes"]))
+
+for v in services_objets:
+    print(v.id, v.debut, v.fin, v.voyages_assignes)
