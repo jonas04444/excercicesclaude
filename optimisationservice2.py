@@ -20,12 +20,13 @@ voyages = [
 ]
 
 services = [
-    {"id": "S1", "debut": "05:30", "fin": "12:00", "voyages_assignes": [0,1]},
+    {"id": "S1", "debut": "05:30", "fin": "12:00", "voyages_assignes": [0,12]},
     {"id": "S2", "debut": "06:00", "fin": "12:30", "voyages_assignes": [2,3]},
     {"id": "S3", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
     {"id": "S4", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
     {"id": "S5", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
-    {"id": "S6", "debut": "06:00", "fin": "12:00", "voyages_assignes": []}
+    {"id": "S6", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
+    #{"id": "S7", "debut": "06:00", "fin": "12:00", "voyages_assignes": []}
 ]
 from ortools.sat.python import cp_model
 
