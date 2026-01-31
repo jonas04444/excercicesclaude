@@ -22,7 +22,8 @@ services = [
     {"id": "S2", "debut": "06:00", "fin": "12:30", "voyages_assignes": [2]},
     {"id": "S3", "debut": "06:00", "fin": "12:00", "voyages_assignes": [6]},
     {"id": "S4", "debut": "06:00", "fin": "12:00", "voyages_assignes": [9]},
-    {"id": "S5", "debut": "06:00", "fin": "12:00", "voyages_assignes": []}
+    {"id": "S5", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
+    {"id": "S6", "debut": "06:00", "fin": "12:00", "voyages_assignes": []}
 ]
 from ortools.sat.python import cp_model
 
@@ -97,14 +98,14 @@ for v1 in range(len(voyages_objets)):
             for s in range(len(services_objets)):
                 model.Add(x[v1, s] + x[v2, s] <= 1)
 
-"""for v1 in range(len(voyages_objets)):
+for v1 in range(len(voyages_objets)):
     for v2 in range(len(voyages_objets)):
         if v1 != v2:
             temps_ok = voyages_objets[v1].h_fin + pause_min <= voyages_objets[v2].h_debut
             geo_ok = voyages_objets[v1].fin[:3] == voyages_objets[v2].debut[:3]  # arrivée_v1 == départ_v2
             if temps_ok and not geo_ok:
                 for s in range(len(services_objets)):
-                    model.Add(x[v1, s] + x[v2, s] <= 1)"""
+                    model.Add(x[v1, s] + x[v2, s] <= 1)
 
 # Ajoute avant le solver
 print("=== Voyages qui se chevauchent ===")
