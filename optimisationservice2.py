@@ -7,21 +7,23 @@ voyages = [
     ("63", 3, "JUMA1", "FOMET", "06:15", "06:45"),
 
     # Voyages à affecter (trouver le bon service)
-    ("63", 4, "FOMET", "JUMA2", "07:30", "08:00"),
-    ("63", 5, "JUMA1", "FOMET", "07:00", "07:30"),
-    ("63", 6, "FOMET", "JUMA2", "07:45", "08:15"),
-    ("63", 7, "JUMA1", "FOMET", "06:30", "07:00"),
-    ("63", 8, "FOMET", "JUMA2", "07:15", "07:45"),
-    ("63", 9, "JUMA1", "FOMET", "08:00", "08:30"),
-    ("63", 10, "FOMET", "JUMA2", "06:45", "07:15"),
-    ("63", 11, "JUMA1", "FOMET", "07:00", "07:30"),
+    ("63", 4, "FOMET", "JUMA2", "07:00", "07:30"),
+    ("63", 5, "JUMA1", "FOMET", "06:30", "07:00"),
+    ("63", 6, "FOMET", "JUMA2", "07:15", "07:45"),
+    ("63", 7, "JUMA1", "FOMET", "06:45", "07:15"),
+    ("63", 8, "FOMET", "JUMA2", "07:30", "08:00"),
+    ("63", 9, "JUMA1", "FOMET", "07:00", "07:30"),
+    ("63", 10, "FOMET", "JUMA2", "07:45", "08:15"),
+    ("63", 11, "JUMA1", "FOMET", "07:15", "07:45"),
+    ("63", 12, "FOMET", "JUMA2", "08:00", "08:30"),
+    ("63", 13, "JUMA1", "FOMET", "08:30", "09:00"),
 ]
 
 services = [
-    {"id": "S1", "debut": "05:30", "fin": "12:00", "voyages_assignes": [0, 1]},
-    {"id": "S2", "debut": "06:00", "fin": "12:30", "voyages_assignes": [2]},
-    {"id": "S3", "debut": "06:00", "fin": "12:00", "voyages_assignes": [6]},
-    {"id": "S4", "debut": "06:00", "fin": "12:00", "voyages_assignes": [9]},
+    {"id": "S1", "debut": "05:30", "fin": "12:00", "voyages_assignes": [0,1]},
+    {"id": "S2", "debut": "06:00", "fin": "12:30", "voyages_assignes": [2,3]},
+    {"id": "S3", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
+    {"id": "S4", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
     {"id": "S5", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
     {"id": "S6", "debut": "06:00", "fin": "12:00", "voyages_assignes": []}
 ]
@@ -85,6 +87,14 @@ for v in range(len(voyages_objets)):
     for s in range(len(services_objets)):
         x[v, s] = model.NewBoolVar(f"voyage_{v}_service_{s}")
 
+y = {}
+for v1 in range(len(voyages_objets)):
+    for v2 in range(len(voyages_objets)):
+        if v1 != v2:
+            if voyages_objets[v1].h_fin + pause_min <= voyages_objets[v2].h_debut:
+                for s in range(len(services_objets)):
+                    y[v1, v2, s] = model.NewBoolVar(f"succ_{v1}_{v2}_{s}")
+
 for v in range(len(voyages_objets)):
     model.Add(sum(x[v, s] for s in range(len(services_objets))) == 1)
 
@@ -98,23 +108,57 @@ for v1 in range(len(voyages_objets)):
             for s in range(len(services_objets)):
                 model.Add(x[v1, s] + x[v2, s] <= 1)
 
+for (v1, v2, s) in y:
+    model.Add(x[v1, s] == 1).OnlyEnforceIf(y[v1, v2, s])
+    model.Add(x[v2, s] == 1).OnlyEnforceIf(y[v1, v2, s])
+
+for v1 in range(len(voyages_objets)):
+    for s in range(len(services_objets)):
+        successeurs = [y[v1, v2, s] for v2 in range(len(voyages_objets)) if (v1, v2, s) in y]
+        if successeurs:
+            model.Add(sum(successeurs) <= 1).OnlyEnforceIf(x[v1, s])
+
+# 6. Chaque voyage a AU PLUS UN prédécesseur direct sur un service
+for v2 in range(len(voyages_objets)):
+    for s in range(len(services_objets)):
+        predecesseurs = [y[v1, v2, s] for v1 in range(len(voyages_objets)) if (v1, v2, s) in y]
+        if predecesseurs:
+            model.Add(sum(predecesseurs) <= 1).OnlyEnforceIf(x[v2, s])
+
+# 7. Continuité géographique : interdit les successions sans continuité
+for (v1, v2, s) in y:
+    geo_ok = voyages_objets[v1].fin[:3] == voyages_objets[v2].debut[:3]
+    if not geo_ok:
+        model.Add(y[v1, v2, s] == 0)
+
+# 8. Si deux voyages sont sur le même service et peuvent se suivre,
+#    l'un doit être le successeur de l'autre (ou il y a un voyage entre)
 for v1 in range(len(voyages_objets)):
     for v2 in range(len(voyages_objets)):
-        if v1 != v2:
-            temps_ok = voyages_objets[v1].h_fin + pause_min <= voyages_objets[v2].h_debut
-            geo_ok = voyages_objets[v1].fin[:3] == voyages_objets[v2].debut[:3]  # arrivée_v1 == départ_v2
-            if temps_ok and not geo_ok:
-                for s in range(len(services_objets)):
-                    model.Add(x[v1, s] + x[v2, s] <= 1)
+        if v1 != v2 and (v1, v2, 0) in y:  # Si v1 peut précéder v2
+            for s in range(len(services_objets)):
+                # Si v1 et v2 sont sur le même service...
+                both_on_s = model.NewBoolVar(f"both_{v1}_{v2}_{s}")
+                model.Add(x[v1, s] + x[v2, s] == 2).OnlyEnforceIf(both_on_s)
+                model.Add(x[v1, s] + x[v2, s] < 2).OnlyEnforceIf(both_on_s.Not())
+
+                # ...alors soit v1→v2 directement, soit il y a un intermédiaire
+                intermediaires = [y[v1, vi, s] for vi in range(len(voyages_objets))
+                                  if (v1, vi, s) in y and vi != v2 and
+                                  voyages_objets[vi].h_fin + pause_min <= voyages_objets[v2].h_debut]
+
+                if (v1, v2, s) in y:
+                    # v1 est suivi de v2 OU v1 est suivi d'un intermédiaire
+                    model.Add(y[v1, v2, s] + sum(intermediaires) >= 1).OnlyEnforceIf(both_on_s)
 
 # Ajoute avant le solver
-print("=== Voyages qui se chevauchent ===")
+"""print("=== Voyages qui se chevauchent ===")
 for v1 in range(len(voyages_objets)):
     for v2 in range(v1 + 1, len(voyages_objets)):
         if chevauchement(v1, v2):
             voy1 = voyages_objets[v1]
             voy2 = voyages_objets[v2]
-            print(f"  v{v1} ({voy1.h_debut}-{voy1.h_fin}) ↔ v{v2} ({voy2.h_debut}-{voy2.h_fin})")
+            print(f"  v{v1} ({voy1.h_debut}-{voy1.h_fin}) ↔ v{v2} ({voy2.h_debut}-{voy2.h_fin})")"""
 
 solver = cp_model.CpSolver()
 status = solver.Solve(model)
