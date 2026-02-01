@@ -16,11 +16,11 @@ voyages = [
     ("63", 10, "FOMET", "JUMA2", "07:45", "08:15"),
     ("63", 11, "JUMA1", "FOMET", "07:15", "07:45"),
     ("63", 12, "FOMET", "JUMA2", "08:00", "08:30"),
-    ("63", 13, "JUMA1", "FOMET", "08:30", "09:00"),
+    ("63", 13, "JUMA1", "FOMET", "09:30", "10:00"),
 ]
 
 services = [
-    {"id": "S1", "debut": "05:30", "fin": "12:00", "voyages_assignes": [0,12]},
+    {"id": "S1", "debut": "05:30", "fin": "12:00", "voyages_assignes": [0,1]},
     {"id": "S2", "debut": "06:00", "fin": "12:30", "voyages_assignes": [2,3]},
     {"id": "S3", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
     {"id": "S4", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
@@ -33,6 +33,57 @@ from ortools.sat.python import cp_model
 model = cp_model.CpModel()
 
 pause_min = 5
+
+
+class SolutionCollector(cp_model.CpSolverSolutionCallback):
+    def __init__(self, x, voyages_objets, services_objets, max_solutions=5):
+        cp_model.CpSolverSolutionCallback.__init__(self)
+        self.x = x
+        self.voyages_objets = voyages_objets
+        self.services_objets = services_objets
+        self.solutions = []
+        self.max_solutions = max_solutions
+
+    def on_solution_callback(self):
+        if len(self.solutions) >= self.max_solutions:
+            self.StopSearch()
+            return
+
+        # Sauvegarder cette solution
+        solution = {}
+        for v in range(len(self.voyages_objets)):
+            for s in range(len(self.services_objets)):
+                if self.Value(self.x[v, s]) == 1:
+                    solution[v] = s
+        self.solutions.append(solution)
+
+    def print_solutions(self):
+        for i, solution in enumerate(self.solutions):
+            print(f"\n{'=' * 50}")
+            print(f"SOLUTION {i + 1}")
+            print(f"{'=' * 50}")
+
+            for s in range(len(self.services_objets)):
+                serv = self.services_objets[s]
+
+                # Récupérer les voyages de ce service
+                voyages_du_service = [v for v, serv_idx in solution.items() if serv_idx == s]
+                voyages_du_service.sort(key=lambda v: self.voyages_objets[v].h_debut)
+
+                if voyages_du_service:
+                    print(
+                        f"\n=== Service {serv.id} ({serv.minutes_to_time(serv.debut)} - {serv.minutes_to_time(serv.fin)}) ===")
+                    for v in voyages_du_service:
+                        voy = self.voyages_objets[v]
+                        debut = voy.minutes_to_time(voy.h_debut)
+                        fin = voy.minutes_to_time(voy.h_fin)
+
+                        if v in serv.voyages_assignes:
+                            tag = "[FIXE]"
+                        else:
+                            tag = "[AJOUTÉ]"
+
+                        print(f"  {tag} {voy.ligne}-{voy.num}: {voy.debut} → {voy.fin} ({debut} - {fin})")
 
 class Service:
     def __init__(self, id, debut, fin):
@@ -161,27 +212,15 @@ for v1 in range(len(voyages_objets)):
             voy2 = voyages_objets[v2]
             print(f"  v{v1} ({voy1.h_debut}-{voy1.h_fin}) ↔ v{v2} ({voy2.h_debut}-{voy2.h_fin})")"""
 
+collector = SolutionCollector(x, voyages_objets, services_objets, max_solutions=10)
+
 solver = cp_model.CpSolver()
-status = solver.Solve(model)
+solver.parameters.enumerate_all_solutions = True
+status = solver.Solve(model, collector)
 
-if status == cp_model.OPTIMAL:
-    for s in range(len(services_objets)):
-        serv = services_objets[s]
-        print(f"\n=== Service {serv.id} ({serv.minutes_to_time(serv.debut)} - {serv.minutes_to_time(serv.fin)}) ===")
-        for v in range(len(voyages_objets)):
-            if solver.Value(x[v, s]) == 1:
-                voy = voyages_objets[v]
-                debut = voy.minutes_to_time(voy.h_debut)
-                fin = voy.minutes_to_time(voy.h_fin)
-
-                # Marquer si pré-assigné ou ajouté
-                if v in serv.voyages_assignes:
-                    tag = "[FIXE]"
-                else:
-                    tag = "[AJOUTÉ]"
-
-                print(f"  {tag} {voy.ligne}-{voy.num}: {voy.debut} → {voy.fin} ({debut} - {fin})")
-
+if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+    print(f"\n🎉 {len(collector.solutions)} solution(s) trouvée(s) !")
+    collector.print_solutions()
 elif status == cp_model.INFEASIBLE:
     print("❌ Pas de solution possible")
 else:
