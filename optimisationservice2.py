@@ -49,41 +49,46 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
             self.StopSearch()
             return
 
-        # Sauvegarder cette solution
-        solution = {}
-        for v in range(len(self.voyages_objets)):
-            for s in range(len(self.services_objets)):
+        # Structure plus complète pour Tkinter
+        solution = {
+            "services": {}
+        }
+
+        for s in range(len(self.services_objets)):
+            serv = self.services_objets[s]
+            voyages_du_service = []
+
+            for v in range(len(self.voyages_objets)):
                 if self.Value(self.x[v, s]) == 1:
-                    solution[v] = s
+                    voy = self.voyages_objets[v]
+                    voyages_du_service.append({
+                        "index": v,
+                        "ligne": voy.ligne,
+                        "num": voy.num,
+                        "depart": voy.debut,
+                        "arrivee": voy.fin,
+                        "heure_debut": voy.h_debut,
+                        "heure_fin": voy.h_fin,
+                        "heure_debut_str": voy.minutes_to_time(voy.h_debut),
+                        "heure_fin_str": voy.minutes_to_time(voy.h_fin),
+                        "fixe": v in serv.voyages_assignes
+                    })
+
+            # Trier par heure de début
+            voyages_du_service.sort(key=lambda x: x["heure_debut"])
+
+            solution["services"][serv.id] = {
+                "id": serv.id,
+                "debut": serv.minutes_to_time(serv.debut),
+                "fin": serv.minutes_to_time(serv.fin),
+                "voyages": voyages_du_service
+            }
+
         self.solutions.append(solution)
 
-    def print_solutions(self):
-        for i, solution in enumerate(self.solutions):
-            print(f"\n{'=' * 50}")
-            print(f"SOLUTION {i + 1}")
-            print(f"{'=' * 50}")
-
-            for s in range(len(self.services_objets)):
-                serv = self.services_objets[s]
-
-                # Récupérer les voyages de ce service
-                voyages_du_service = [v for v, serv_idx in solution.items() if serv_idx == s]
-                voyages_du_service.sort(key=lambda v: self.voyages_objets[v].h_debut)
-
-                if voyages_du_service:
-                    print(
-                        f"\n=== Service {serv.id} ({serv.minutes_to_time(serv.debut)} - {serv.minutes_to_time(serv.fin)}) ===")
-                    for v in voyages_du_service:
-                        voy = self.voyages_objets[v]
-                        debut = voy.minutes_to_time(voy.h_debut)
-                        fin = voy.minutes_to_time(voy.h_fin)
-
-                        if v in serv.voyages_assignes:
-                            tag = "[FIXE]"
-                        else:
-                            tag = "[AJOUTÉ]"
-
-                        print(f"  {tag} {voy.ligne}-{voy.num}: {voy.debut} → {voy.fin} ({debut} - {fin})")
+    def get_solutions(self):
+        """Retourne les solutions pour Tkinter"""
+        return self.solutions
 
 class Service:
     def __init__(self, id, debut, fin):
@@ -220,8 +225,57 @@ status = solver.Solve(model, collector)
 
 if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
     print(f"\n🎉 {len(collector.solutions)} solution(s) trouvée(s) !")
-    collector.print_solutions()
 elif status == cp_model.INFEASIBLE:
     print("❌ Pas de solution possible")
 else:
     print(f"Status: {status}")
+
+import tkinter as tk
+from tkinter import ttk
+
+
+def afficher_solutions(solutions):
+    root = tk.Tk()
+    root.title("Solutions d'attribution")
+    root.geometry("800x600")
+
+    # Combobox pour choisir la solution
+    frame_top = tk.Frame(root)
+    frame_top.pack(pady=10)
+
+    tk.Label(frame_top, text="Choisir une solution :").pack(side=tk.LEFT)
+
+    solution_var = tk.StringVar()
+    combo = ttk.Combobox(frame_top, textvariable=solution_var,
+                         values=[f"Solution {i + 1}" for i in range(len(solutions))])
+    combo.pack(side=tk.LEFT, padx=10)
+    combo.current(0)
+
+    # Zone d'affichage
+    text_area = tk.Text(root, width=90, height=30)
+    text_area.pack(pady=10, padx=10)
+
+    def afficher_solution(event=None):
+        text_area.delete(1.0, tk.END)
+        idx = combo.current()
+        solution = solutions[idx]
+
+        for service_id, service_data in solution["services"].items():
+            if service_data["voyages"]:
+                text_area.insert(tk.END,
+                                 f"\n=== Service {service_id} ({service_data['debut']} - {service_data['fin']}) ===\n")
+
+                for voyage in service_data["voyages"]:
+                    tag = "[FIXE]" if voyage["fixe"] else "[AJOUTÉ]"
+                    text_area.insert(tk.END,
+                                     f"  {tag} {voyage['ligne']}-{voyage['num']}: {voyage['depart']} → {voyage['arrivee']} ({voyage['heure_debut_str']} - {voyage['heure_fin_str']})\n")
+
+    combo.bind("<<ComboboxSelected>>", afficher_solution)
+    afficher_solution()  # Afficher la première solution
+
+    root.mainloop()
+
+
+# Appel après la résolution
+solutions = collector.get_solutions()
+afficher_solutions(solutions)
