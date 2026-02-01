@@ -10,25 +10,24 @@ from PyQt6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem,
     QGraphicsLineItem, QPushButton, QLabel, QSpinBox, QTimeEdit,
     QDialog, QFormLayout, QLineEdit, QComboBox, QDialogButtonBox,
-    QFrame, QProgressBar, QSplitter, QInputDialog
+    QFrame, QInputDialog
 )
 from PyQt6.QtCore import Qt, QRectF, QTime, pyqtSignal
 from PyQt6.QtGui import QBrush, QPen, QColor, QFont, QPainter
 
 
 # Configuration de la timeline
-HEURE_DEBUT = 5
-HEURE_FIN = 23
-PIXELS_PAR_HEURE = 60
+HEURE_DEBUT = 4
+HEURE_FIN = 24
 HAUTEUR_SERVICE = 50
-MARGE_GAUCHE = 100
+MARGE_GAUCHE = 80
 MARGE_HAUT = 40
 
 
 class VoyageItem(QGraphicsRectItem):
     """Rectangle représentant un voyage sur la timeline"""
 
-    def __init__(self, voyage_data, y_position, timeline_view, parent=None):
+    def __init__(self, voyage_data, y_position, timeline_view, pixels_par_heure, parent=None):
         self.voyage_data = voyage_data
         self.timeline_view = timeline_view
         self.y_position = y_position
@@ -36,11 +35,11 @@ class VoyageItem(QGraphicsRectItem):
 
         # Calcul de la position X basée sur l'heure de départ
         heure_depart = voyage_data['heure_depart']
-        x = MARGE_GAUCHE + (heure_depart - HEURE_DEBUT) * PIXELS_PAR_HEURE
+        x = MARGE_GAUCHE + (heure_depart - HEURE_DEBUT) * pixels_par_heure
 
         # Calcul de la largeur basée sur la durée
         duree_heures = voyage_data['duree_minutes'] / 60
-        largeur = max(duree_heures * PIXELS_PAR_HEURE, 40)
+        largeur = max(duree_heures * pixels_par_heure, 40)
 
         # Position Y centrée sur la ligne du service
         y = y_position - 15
@@ -57,18 +56,19 @@ class VoyageItem(QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # Texte du voyage
-        self.text_item = QGraphicsTextItem(voyage_data['nom'], self)
-        self.text_item.setDefaultTextColor(Qt.GlobalColor.white)
-        self.text_item.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-        self.text_item.setPos(x + 5, y + 3)
+        # Texte du voyage (seulement si assez de place)
+        if largeur > 50:
+            self.text_item = QGraphicsTextItem(voyage_data['nom'], self)
+            self.text_item.setDefaultTextColor(Qt.GlobalColor.white)
+            self.text_item.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            self.text_item.setPos(x + 5, y + 3)
 
-        # Heure
-        heure_str = f"{int(heure_depart):02d}:{int((heure_depart % 1) * 60):02d}"
-        self.heure_item = QGraphicsTextItem(heure_str, self)
-        self.heure_item.setDefaultTextColor(QColor(255, 255, 255, 180))
-        self.heure_item.setFont(QFont("Arial", 7))
-        self.heure_item.setPos(x + 5, y + 16)
+            # Heure
+            heure_str = f"{int(heure_depart):02d}:{int((heure_depart % 1) * 60):02d}"
+            self.heure_item = QGraphicsTextItem(heure_str, self)
+            self.heure_item.setDefaultTextColor(QColor(255, 255, 255, 180))
+            self.heure_item.setFont(QFont("Arial", 7))
+            self.heure_item.setPos(x + 5, y + 16)
 
     def hoverEnterEvent(self, event):
         if not self.is_selected:
@@ -94,51 +94,8 @@ class VoyageItem(QGraphicsRectItem):
             self.setPen(QPen(self.couleur_base.darker(120), 2))
 
 
-class ServiceLine:
-    """Représente une ligne de service avec sa timeline"""
-
-    def __init__(self, scene, nom, y_position, timeline_view, couleur='#34495e'):
-        self.scene = scene
-        self.nom = nom
-        self.y_position = y_position
-        self.timeline_view = timeline_view
-        self.couleur = couleur
-        self.voyages = []
-
-        self._dessiner_ligne()
-
-    def _dessiner_ligne(self):
-        largeur_totale = (HEURE_FIN - HEURE_DEBUT) * PIXELS_PAR_HEURE
-        ligne = QGraphicsLineItem(MARGE_GAUCHE, self.y_position,
-                                   MARGE_GAUCHE + largeur_totale, self.y_position)
-        ligne.setPen(QPen(QColor(self.couleur), 2))
-        self.scene.addItem(ligne)
-
-        label = QGraphicsTextItem(self.nom)
-        label.setDefaultTextColor(QColor('#2c3e50'))
-        label.setFont(QFont("Arial", 9, QFont.Weight.Bold))
-        label.setPos(5, self.y_position - 10)
-        self.scene.addItem(label)
-
-        index = (self.y_position - MARGE_HAUT) // HAUTEUR_SERVICE
-        if index % 2 == 0:
-            fond = QGraphicsRectItem(MARGE_GAUCHE, self.y_position - 25,
-                                      largeur_totale, HAUTEUR_SERVICE)
-            fond.setBrush(QBrush(QColor(240, 240, 240, 100)))
-            fond.setPen(QPen(Qt.PenStyle.NoPen))
-            fond.setZValue(-1)
-            self.scene.addItem(fond)
-
-    def ajouter_voyage(self, voyage_data):
-        voyage_data['service_nom'] = self.nom
-        voyage_item = VoyageItem(voyage_data, self.y_position, self.timeline_view)
-        self.scene.addItem(voyage_item)
-        self.voyages.append(voyage_item)
-        return voyage_item
-
-
 class TimelineView(QGraphicsView):
-    """Vue principale de la timeline"""
+    """Vue principale de la timeline - responsive"""
 
     voyage_selected = pyqtSignal(dict)
     voyage_deselected = pyqtSignal()
@@ -150,52 +107,142 @@ class TimelineView(QGraphicsView):
         self.setScene(self.scene)
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setMinimumHeight(200)
 
-        self.services = []
+        self.services_data = []  # Stocke les données des services
+        self.selected_voyage = None
+        self.voyage_items = []  # Référence aux items de voyage pour la sélection
+
+    def get_pixels_par_heure(self):
+        """Calcule dynamiquement les pixels par heure selon la largeur disponible"""
+        largeur_disponible = self.viewport().width() - MARGE_GAUCHE - 20
+        return largeur_disponible / (HEURE_FIN - HEURE_DEBUT)
+
+    def resizeEvent(self, event):
+        """Redessine la timeline quand la vue est redimensionnée"""
+        super().resizeEvent(event)
+        self._redessiner_tout()
+
+    def _redessiner_tout(self):
+        """Redessine tous les éléments de la timeline"""
+        # Sauvegarder le voyage sélectionné
+        selected_data = None
+        if self.selected_voyage:
+            selected_data = self.selected_voyage.voyage_data
+
+        self.scene.clear()
+        self.voyage_items = []
         self.selected_voyage = None
 
-        self._dessiner_echelle_temps()
+        pixels_par_heure = self.get_pixels_par_heure()
 
-    def _dessiner_echelle_temps(self):
+        self._dessiner_echelle_temps(pixels_par_heure)
+
+        # Redessiner les services et voyages
+        for i, service_data in enumerate(self.services_data):
+            y_position = MARGE_HAUT + i * HAUTEUR_SERVICE + 30
+            self._dessiner_service(service_data, y_position, pixels_par_heure)
+
+            for voyage_data in service_data['voyages']:
+                item = self._dessiner_voyage(voyage_data, y_position, pixels_par_heure)
+                self.voyage_items.append(item)
+
+                # Restaurer la sélection
+                if selected_data and voyage_data['id'] == selected_data['id']:
+                    item.set_selected(True)
+                    self.selected_voyage = item
+
+        # Mettre à jour la taille de la scène
+        largeur = self.viewport().width()
+        hauteur = MARGE_HAUT + len(self.services_data) * HAUTEUR_SERVICE + 50
+        self.scene.setSceneRect(0, 0, largeur, max(hauteur, self.viewport().height()))
+
+    def _dessiner_echelle_temps(self, pixels_par_heure):
+        """Dessine l'échelle de temps en haut"""
+        largeur_totale = (HEURE_FIN - HEURE_DEBUT) * pixels_par_heure
+
         for heure in range(HEURE_DEBUT, HEURE_FIN + 1):
-            x = MARGE_GAUCHE + (heure - HEURE_DEBUT) * PIXELS_PAR_HEURE
+            x = MARGE_GAUCHE + (heure - HEURE_DEBUT) * pixels_par_heure
 
             ligne = QGraphicsLineItem(x, MARGE_HAUT - 10, x, MARGE_HAUT)
             ligne.setPen(QPen(QColor('#7f8c8d'), 1))
             self.scene.addItem(ligne)
 
-            label = QGraphicsTextItem(f"{heure:02d}h")
+            # Afficher 24h comme "00h" si on veut, ou garder "24h"
+            heure_affichee = heure if heure < 24 else 0
+            label = QGraphicsTextItem(f"{heure_affichee:02d}h")
             label.setDefaultTextColor(QColor('#7f8c8d'))
             label.setFont(QFont("Arial", 8))
             label.setPos(x - 12, MARGE_HAUT - 30)
             self.scene.addItem(label)
 
+            # Ligne verticale en pointillés
             ligne_guide = QGraphicsLineItem(x, MARGE_HAUT, x, 600)
             pen = QPen(QColor('#ecf0f1'), 1, Qt.PenStyle.DotLine)
             ligne_guide.setPen(pen)
             ligne_guide.setZValue(-2)
             self.scene.addItem(ligne_guide)
 
+    def _dessiner_service(self, service_data, y_position, pixels_par_heure):
+        """Dessine une ligne de service"""
+        largeur_totale = (HEURE_FIN - HEURE_DEBUT) * pixels_par_heure
+
+        # Ligne horizontale
+        ligne = QGraphicsLineItem(MARGE_GAUCHE, y_position,
+                                   MARGE_GAUCHE + largeur_totale, y_position)
+        ligne.setPen(QPen(QColor(service_data['couleur']), 2))
+        self.scene.addItem(ligne)
+
+        # Label du service
+        label = QGraphicsTextItem(service_data['nom'])
+        label.setDefaultTextColor(QColor('#2c3e50'))
+        label.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+        label.setPos(5, y_position - 10)
+        self.scene.addItem(label)
+
+        # Fond alterné
+        index = (y_position - MARGE_HAUT) // HAUTEUR_SERVICE
+        if index % 2 == 0:
+            fond = QGraphicsRectItem(MARGE_GAUCHE, y_position - 25,
+                                      largeur_totale, HAUTEUR_SERVICE)
+            fond.setBrush(QBrush(QColor(240, 240, 240, 100)))
+            fond.setPen(QPen(Qt.PenStyle.NoPen))
+            fond.setZValue(-1)
+            self.scene.addItem(fond)
+
+    def _dessiner_voyage(self, voyage_data, y_position, pixels_par_heure):
+        """Dessine un voyage et retourne l'item"""
+        item = VoyageItem(voyage_data, y_position, self, pixels_par_heure)
+        self.scene.addItem(item)
+        return item
+
     def ajouter_service(self, nom, couleur='#34495e'):
-        y_position = MARGE_HAUT + len(self.services) * HAUTEUR_SERVICE + 30
-        service = ServiceLine(self.scene, nom, y_position, self, couleur)
-        self.services.append(service)
+        """Ajoute un nouveau service"""
+        service_data = {
+            'nom': nom,
+            'couleur': couleur,
+            'voyages': []
+        }
+        self.services_data.append(service_data)
+        self._redessiner_tout()
+        return service_data
 
-        largeur = MARGE_GAUCHE + (HEURE_FIN - HEURE_DEBUT) * PIXELS_PAR_HEURE + 50
-        hauteur = y_position + HAUTEUR_SERVICE
-        self.scene.setSceneRect(0, 0, largeur, hauteur)
-
-        return service
+    def ajouter_voyage(self, service_index, voyage_data):
+        """Ajoute un voyage à un service"""
+        if 0 <= service_index < len(self.services_data):
+            # Générer un ID unique
+            voyage_data['id'] = id(voyage_data)
+            voyage_data['service_nom'] = self.services_data[service_index]['nom']
+            self.services_data[service_index]['voyages'].append(voyage_data)
+            self._redessiner_tout()
 
     def select_voyage(self, voyage_item):
-        # Désélectionner l'ancien
+        """Sélectionne un voyage"""
         if self.selected_voyage and self.selected_voyage != voyage_item:
             self.selected_voyage.set_selected(False)
 
-        # Si on clique sur le même, on désélectionne
         if self.selected_voyage == voyage_item:
             voyage_item.set_selected(False)
             self.selected_voyage = None
@@ -212,8 +259,6 @@ class DetailPanel(QFrame):
     def __init__(self):
         super().__init__()
         self.setFrameStyle(QFrame.Shape.StyledPanel)
-        self.setMinimumWidth(280)
-        self.setMaximumWidth(320)
 
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(10)
@@ -242,81 +287,30 @@ class DetailPanel(QFrame):
         self.placeholder.setStyleSheet("color: #9ca3af; font-size: 13px;")
         self.details_layout.addWidget(self.placeholder)
 
-        # Widgets de détails (cachés par défaut)
-        self.nom_label = QLabel()
-        self.nom_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        self.nom_label.setWordWrap(True)
-        self.nom_label.hide()
-        self.details_layout.addWidget(self.nom_label)
+        # Numéro de ligne
+        self.ligne_frame = self._create_info_frame("🚌", "Numéro de ligne", "#dbeafe")
+        self.ligne_frame.hide()
+        self.details_layout.addWidget(self.ligne_frame)
 
-        self.service_label = QLabel()
-        self.service_label.setStyleSheet("color: #6b7280; font-size: 11px;")
-        self.service_label.hide()
-        self.details_layout.addWidget(self.service_label)
+        # Numéro de voyage
+        self.voyage_num_frame = self._create_info_frame("🎫", "Numéro de voyage", "#fef3c7")
+        self.voyage_num_frame.hide()
+        self.details_layout.addWidget(self.voyage_num_frame)
 
         # Horaires
         self.horaires_frame = self._create_info_frame("🕐", "Horaires", "#f3f4f6")
         self.horaires_frame.hide()
         self.details_layout.addWidget(self.horaires_frame)
 
-        # Chauffeur
-        self.chauffeur_frame = self._create_info_frame("👤", "Chauffeur", "#dbeafe")
-        self.chauffeur_frame.hide()
-        self.details_layout.addWidget(self.chauffeur_frame)
+        # Arrêt de départ
+        self.depart_frame = self._create_info_frame("🟢", "Arrêt de départ", "#dcfce7")
+        self.depart_frame.hide()
+        self.details_layout.addWidget(self.depart_frame)
 
-        # Bus
-        self.bus_frame = self._create_info_frame("🚌", "Véhicule", "#dcfce7")
-        self.bus_frame.hide()
-        self.details_layout.addWidget(self.bus_frame)
-
-        # Remplissage
-        self.remplissage_frame = QFrame()
-        self.remplissage_frame.setStyleSheet("background-color: #f3f4f6; border-radius: 8px; padding: 5px;")
-        remplissage_layout = QVBoxLayout(self.remplissage_frame)
-
-        self.remplissage_header = QHBoxLayout()
-        self.remplissage_title = QLabel("Remplissage")
-        self.remplissage_title.setStyleSheet("color: #6b7280; font-size: 11px;")
-        self.statut_label = QLabel()
-        self.statut_label.setStyleSheet("font-size: 10px; padding: 2px 8px; border-radius: 10px;")
-        self.remplissage_header.addWidget(self.remplissage_title)
-        self.remplissage_header.addStretch()
-        self.remplissage_header.addWidget(self.statut_label)
-        remplissage_layout.addLayout(self.remplissage_header)
-
-        self.places_label = QLabel()
-        self.places_label.setFont(QFont("Arial", 11))
-        remplissage_layout.addWidget(self.places_label)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setMinimumHeight(20)
-        remplissage_layout.addWidget(self.progress_bar)
-
-        self.remplissage_frame.hide()
-        self.details_layout.addWidget(self.remplissage_frame)
-
-        # Places disponibles
-        self.dispo_frame = QFrame()
-        self.dispo_frame.setStyleSheet("""
-            QFrame {
-                border: 2px dashed #d1d5db;
-                border-radius: 8px;
-                padding: 10px;
-            }
-        """)
-        dispo_layout = QVBoxLayout(self.dispo_frame)
-        self.dispo_count = QLabel()
-        self.dispo_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dispo_count.setFont(QFont("Arial", 20, QFont.Weight.Bold))
-        self.dispo_count.setStyleSheet("color: #16a34a; border: none;")
-        dispo_layout.addWidget(self.dispo_count)
-        self.dispo_text = QLabel("places disponibles")
-        self.dispo_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dispo_text.setStyleSheet("color: #6b7280; font-size: 11px; border: none;")
-        dispo_layout.addWidget(self.dispo_text)
-        self.dispo_frame.hide()
-        self.details_layout.addWidget(self.dispo_frame)
+        # Arrêt d'arrivée
+        self.arrivee_frame = self._create_info_frame("🔴", "Arrêt d'arrivée", "#fee2e2")
+        self.arrivee_frame.hide()
+        self.details_layout.addWidget(self.arrivee_frame)
 
         self.details_layout.addStretch()
         self.layout.addWidget(self.details_container)
@@ -342,7 +336,7 @@ class DetailPanel(QFrame):
         info_layout.addWidget(title_label)
 
         value_label = QLabel()
-        value_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        value_label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
         value_label.setStyleSheet("background: transparent;")
         value_label.setWordWrap(True)
         info_layout.addWidget(value_label)
@@ -367,12 +361,13 @@ class DetailPanel(QFrame):
             }}
         """)
 
-        # Nom et service
-        self.nom_label.setText(data['nom'])
-        self.nom_label.show()
+        # Numéro de ligne
+        self.ligne_frame.value_label.setText(data.get('numero_ligne', 'N/A'))
+        self.ligne_frame.show()
 
-        self.service_label.setText(data.get('service_nom', ''))
-        self.service_label.show()
+        # Numéro de voyage
+        self.voyage_num_frame.value_label.setText(data.get('numero_voyage', 'N/A'))
+        self.voyage_num_frame.show()
 
         # Horaires
         heure_dep = data['heure_depart']
@@ -386,56 +381,13 @@ class DetailPanel(QFrame):
         self.horaires_frame.value_label.setText(f"{h_dep} → {h_arr}\nDurée: {duree_str}")
         self.horaires_frame.show()
 
-        # Chauffeur
-        self.chauffeur_frame.value_label.setText(data.get('chauffeur', 'Non assigné'))
-        self.chauffeur_frame.show()
+        # Arrêt de départ
+        self.depart_frame.value_label.setText(data.get('arret_depart', 'N/A'))
+        self.depart_frame.show()
 
-        # Bus
-        self.bus_frame.value_label.setText(data.get('bus', 'Non assigné'))
-        self.bus_frame.show()
-
-        # Remplissage
-        places = data.get('places', 50)
-        reservees = data.get('places_reservees', 0)
-        taux = int((reservees / places) * 100) if places > 0 else 0
-
-        self.places_label.setText(f"<b style='font-size: 18px;'>{reservees}</b> / {places} places")
-        self.progress_bar.setValue(taux)
-
-        # Couleur et statut
-        if taux >= 100:
-            statut, couleur_statut, bg_statut = "Complet", "#dc2626", "#fecaca"
-            bar_color = "#ef4444"
-        elif taux >= 75:
-            statut, couleur_statut, bg_statut = "Presque complet", "#ea580c", "#fed7aa"
-            bar_color = "#f97316"
-        elif taux >= 50:
-            statut, couleur_statut, bg_statut = "Bien rempli", "#ca8a04", "#fef08a"
-            bar_color = "#eab308"
-        else:
-            statut, couleur_statut, bg_statut = "Disponible", "#16a34a", "#bbf7d0"
-            bar_color = "#22c55e"
-
-        self.statut_label.setText(statut)
-        self.statut_label.setStyleSheet(f"color: {couleur_statut}; background-color: {bg_statut}; font-size: 10px; padding: 2px 8px; border-radius: 10px;")
-        self.progress_bar.setStyleSheet(f"""
-            QProgressBar {{
-                border: none;
-                border-radius: 5px;
-                background-color: #e5e7eb;
-                text-align: center;
-            }}
-            QProgressBar::chunk {{
-                border-radius: 5px;
-                background-color: {bar_color};
-            }}
-        """)
-        self.remplissage_frame.show()
-
-        # Places disponibles
-        dispo = places - reservees
-        self.dispo_count.setText(str(dispo))
-        self.dispo_frame.show()
+        # Arrêt d'arrivée
+        self.arrivee_frame.value_label.setText(data.get('arret_arrivee', 'N/A'))
+        self.arrivee_frame.show()
 
     def clear_voyage(self):
         self.header.setStyleSheet("""
@@ -446,59 +398,64 @@ class DetailPanel(QFrame):
                 border-radius: 5px;
             }
         """)
-        self.nom_label.hide()
-        self.service_label.hide()
+        self.ligne_frame.hide()
+        self.voyage_num_frame.hide()
         self.horaires_frame.hide()
-        self.chauffeur_frame.hide()
-        self.bus_frame.hide()
-        self.remplissage_frame.hide()
-        self.dispo_frame.hide()
+        self.depart_frame.hide()
+        self.arrivee_frame.hide()
         self.placeholder.show()
 
 
 class DialogAjoutVoyage(QDialog):
     """Dialogue pour ajouter un nouveau voyage"""
 
-    def __init__(self, services, parent=None):
+    def __init__(self, services_data, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ajouter un voyage")
         self.setMinimumWidth(350)
 
         layout = QFormLayout(self)
 
-        self.nom_edit = QLineEdit()
-        self.nom_edit.setPlaceholderText("Ex: Paris → Lyon")
-        layout.addRow("Nom du voyage:", self.nom_edit)
-
+        # Service
         self.service_combo = QComboBox()
-        for i, service in enumerate(services):
-            self.service_combo.addItem(service.nom, i)
+        for i, service in enumerate(services_data):
+            self.service_combo.addItem(service['nom'], i)
         layout.addRow("Service:", self.service_combo)
 
+        # Numéro de ligne
+        self.ligne_edit = QLineEdit()
+        self.ligne_edit.setPlaceholderText("Ex: L42")
+        layout.addRow("Numéro de ligne:", self.ligne_edit)
+
+        # Numéro de voyage
+        self.voyage_num_edit = QLineEdit()
+        self.voyage_num_edit.setPlaceholderText("Ex: V001")
+        layout.addRow("Numéro de voyage:", self.voyage_num_edit)
+
+        # Heure de départ
         self.heure_depart = QTimeEdit()
         self.heure_depart.setTime(QTime(8, 0))
         self.heure_depart.setDisplayFormat("HH:mm")
         layout.addRow("Heure de départ:", self.heure_depart)
 
+        # Durée
         self.duree_spin = QSpinBox()
         self.duree_spin.setRange(15, 480)
         self.duree_spin.setValue(60)
         self.duree_spin.setSuffix(" minutes")
         layout.addRow("Durée:", self.duree_spin)
 
-        self.chauffeur_edit = QLineEdit()
-        self.chauffeur_edit.setPlaceholderText("Nom du chauffeur")
-        layout.addRow("Chauffeur:", self.chauffeur_edit)
+        # Arrêt de départ
+        self.arret_depart_edit = QLineEdit()
+        self.arret_depart_edit.setPlaceholderText("Ex: Paris Bercy")
+        layout.addRow("Arrêt de départ:", self.arret_depart_edit)
 
-        self.bus_edit = QLineEdit()
-        self.bus_edit.setPlaceholderText("Ex: Bus 42 - Mercedes")
-        layout.addRow("Bus:", self.bus_edit)
+        # Arrêt d'arrivée
+        self.arret_arrivee_edit = QLineEdit()
+        self.arret_arrivee_edit.setPlaceholderText("Ex: Lyon Perrache")
+        layout.addRow("Arrêt d'arrivée:", self.arret_arrivee_edit)
 
-        self.places_spin = QSpinBox()
-        self.places_spin.setRange(1, 100)
-        self.places_spin.setValue(50)
-        layout.addRow("Places:", self.places_spin)
-
+        # Couleur
         self.couleur_combo = QComboBox()
         couleurs = [
             ("#3498db", "Bleu"),
@@ -512,6 +469,7 @@ class DialogAjoutVoyage(QDialog):
             self.couleur_combo.addItem(nom, code)
         layout.addRow("Couleur:", self.couleur_combo)
 
+        # Boutons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -523,15 +481,19 @@ class DialogAjoutVoyage(QDialog):
         time = self.heure_depart.time()
         heure_decimale = time.hour() + time.minute() / 60
 
+        # Créer le nom à partir des arrêts
+        arret_dep = self.arret_depart_edit.text() or "Départ"
+        arret_arr = self.arret_arrivee_edit.text() or "Arrivée"
+
         return {
-            'nom': self.nom_edit.text() or "Voyage",
+            'nom': f"{arret_dep} → {arret_arr}",
             'service_index': self.service_combo.currentData(),
+            'numero_ligne': self.ligne_edit.text() or "N/A",
+            'numero_voyage': self.voyage_num_edit.text() or "N/A",
             'heure_depart': heure_decimale,
             'duree_minutes': self.duree_spin.value(),
-            'chauffeur': self.chauffeur_edit.text() or "Non assigné",
-            'bus': self.bus_edit.text() or "Non assigné",
-            'places': self.places_spin.value(),
-            'places_reservees': 0,
+            'arret_depart': arret_dep,
+            'arret_arrivee': arret_arr,
             'couleur': self.couleur_combo.currentData()
         }
 
@@ -568,110 +530,116 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(toolbar)
 
-        # Splitter horizontal: Timeline | Détails
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Layout horizontal: Timeline (extensible) | Détails (fixe)
+        content_layout = QHBoxLayout()
 
-        # Timeline
+        # Timeline - prend tout l'espace disponible
         self.timeline = TimelineView()
         self.timeline.voyage_selected.connect(self.on_voyage_selected)
         self.timeline.voyage_deselected.connect(self.on_voyage_deselected)
-        splitter.addWidget(self.timeline)
+        self.timeline.setSizePolicy(self.timeline.sizePolicy().horizontalPolicy(),
+                                     self.timeline.sizePolicy().verticalPolicy())
+        content_layout.addWidget(self.timeline, stretch=1)
 
-        # Panneau de détails
+        # Panneau de détails - taille fixe
         self.detail_panel = DetailPanel()
-        splitter.addWidget(self.detail_panel)
+        self.detail_panel.setFixedWidth(290)
+        content_layout.addWidget(self.detail_panel, stretch=0)
 
-        splitter.setSizes([800, 300])
-        main_layout.addWidget(splitter)
+        main_layout.addLayout(content_layout)
 
         self._creer_demo()
 
     def _creer_demo(self):
-        service1 = self.timeline.ajouter_service("Service A", "#2c3e50")
-        service2 = self.timeline.ajouter_service("Service B", "#8e44ad")
-        service3 = self.timeline.ajouter_service("Service C", "#c0392b")
+        # Créer les services
+        self.timeline.ajouter_service("Service A", "#2c3e50")
+        self.timeline.ajouter_service("Service B", "#8e44ad")
+        self.timeline.ajouter_service("Service C", "#c0392b")
 
-        service1.ajouter_voyage({
+        # Service A - index 0
+        self.timeline.ajouter_voyage(0, {
             'nom': "Paris → Lyon",
+            'numero_ligne': "L01",
+            'numero_voyage': "V001",
             'heure_depart': 6.5,
             'duree_minutes': 120,
-            'couleur': '#3498db',
-            'chauffeur': 'Jean Dupont',
-            'bus': 'Bus 42 - Mercedes Citaro',
-            'places': 54,
-            'places_reservees': 38
+            'arret_depart': "Paris Bercy",
+            'arret_arrivee': "Lyon Perrache",
+            'couleur': '#3498db'
         })
-        service1.ajouter_voyage({
+        self.timeline.ajouter_voyage(0, {
             'nom': "Lyon → Marseille",
+            'numero_ligne': "L01",
+            'numero_voyage': "V002",
             'heure_depart': 10,
             'duree_minutes': 90,
-            'couleur': '#3498db',
-            'chauffeur': 'Marie Martin',
-            'bus': 'Bus 15 - Iveco Crossway',
-            'places': 50,
-            'places_reservees': 45
+            'arret_depart': "Lyon Perrache",
+            'arret_arrivee': "Marseille St-Charles",
+            'couleur': '#3498db'
         })
-        service1.ajouter_voyage({
+        self.timeline.ajouter_voyage(0, {
             'nom': "Marseille → Nice",
+            'numero_ligne': "L01",
+            'numero_voyage': "V003",
             'heure_depart': 14,
             'duree_minutes': 150,
-            'couleur': '#2ecc71',
-            'chauffeur': 'Jean Dupont',
-            'bus': 'Bus 42 - Mercedes Citaro',
-            'places': 54,
-            'places_reservees': 22
+            'arret_depart': "Marseille St-Charles",
+            'arret_arrivee': "Nice Côte d'Azur",
+            'couleur': '#2ecc71'
         })
 
-        service2.ajouter_voyage({
+        # Service B - index 1
+        self.timeline.ajouter_voyage(1, {
             'nom': "Bordeaux → Toulouse",
+            'numero_ligne': "L02",
+            'numero_voyage': "V010",
             'heure_depart': 7,
             'duree_minutes': 150,
-            'couleur': '#e74c3c',
-            'chauffeur': 'Pierre Durand',
-            'bus': 'Bus 28 - Setra S 415',
-            'places': 48,
-            'places_reservees': 48
+            'arret_depart': "Bordeaux St-Jean",
+            'arret_arrivee': "Toulouse Matabiau",
+            'couleur': '#e74c3c'
         })
-        service2.ajouter_voyage({
+        self.timeline.ajouter_voyage(1, {
             'nom': "Toulouse → Montpellier",
+            'numero_ligne': "L02",
+            'numero_voyage': "V011",
             'heure_depart': 12,
             'duree_minutes': 180,
-            'couleur': '#f39c12',
-            'chauffeur': 'Pierre Durand',
-            'bus': 'Bus 28 - Setra S 415',
-            'places': 48,
-            'places_reservees': 31
+            'arret_depart': "Toulouse Matabiau",
+            'arret_arrivee': "Montpellier Sud",
+            'couleur': '#f39c12'
         })
 
-        service3.ajouter_voyage({
+        # Service C - index 2
+        self.timeline.ajouter_voyage(2, {
             'nom': "Paris → Lille",
+            'numero_ligne': "L03",
+            'numero_voyage': "V020",
             'heure_depart': 8,
             'duree_minutes': 60,
-            'couleur': '#9b59b6',
-            'chauffeur': 'Sophie Bernard',
-            'bus': 'Bus 07 - MAN Lion\'s Coach',
-            'places': 44,
-            'places_reservees': 44
+            'arret_depart': "Paris Nord",
+            'arret_arrivee': "Lille Flandres",
+            'couleur': '#9b59b6'
         })
-        service3.ajouter_voyage({
+        self.timeline.ajouter_voyage(2, {
             'nom': "Lille → Bruxelles",
+            'numero_ligne': "L03",
+            'numero_voyage': "V021",
             'heure_depart': 11,
             'duree_minutes': 45,
-            'couleur': '#9b59b6',
-            'chauffeur': 'Sophie Bernard',
-            'bus': 'Bus 07 - MAN Lion\'s Coach',
-            'places': 44,
-            'places_reservees': 40
+            'arret_depart': "Lille Flandres",
+            'arret_arrivee': "Bruxelles Midi",
+            'couleur': '#9b59b6'
         })
-        service3.ajouter_voyage({
+        self.timeline.ajouter_voyage(2, {
             'nom': "Bruxelles → Amsterdam",
+            'numero_ligne': "L03",
+            'numero_voyage': "V022",
             'heure_depart': 15,
             'duree_minutes': 120,
-            'couleur': '#1abc9c',
-            'chauffeur': 'Sophie Bernard',
-            'bus': 'Bus 07 - MAN Lion\'s Coach',
-            'places': 44,
-            'places_reservees': 12
+            'arret_depart': "Bruxelles Midi",
+            'arret_arrivee': "Amsterdam Centraal",
+            'couleur': '#1abc9c'
         })
 
     def on_voyage_selected(self, data):
@@ -689,15 +657,15 @@ class MainWindow(QMainWindow):
             self.info_label.setText(f"Service '{nom}' ajouté")
 
     def ajouter_voyage(self):
-        if not self.timeline.services:
+        if not self.timeline.services_data:
             self.info_label.setText("⚠️ Ajoutez d'abord un service!")
             return
 
-        dialog = DialogAjoutVoyage(self.timeline.services, self)
+        dialog = DialogAjoutVoyage(self.timeline.services_data, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
-            service = self.timeline.services[data['service_index']]
-            service.ajouter_voyage(data)
+            service_index = data.pop('service_index')
+            self.timeline.ajouter_voyage(service_index, data)
             self.info_label.setText(f"Voyage '{data['nom']}' ajouté")
 
 
