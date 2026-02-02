@@ -1,16 +1,18 @@
 """
 Application de gestion de services de bus avec timeline
 Chaque service est une ligne horizontale, les voyages sont des rectangles sur cette ligne
-Avec panneau de détails à droite
+Avec panneau de détails à droite et import CSV
 """
 
 import sys
+import csv
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem,
     QGraphicsLineItem, QPushButton, QLabel, QSpinBox, QTimeEdit,
     QDialog, QFormLayout, QLineEdit, QComboBox, QDialogButtonBox,
-    QFrame, QInputDialog
+    QFrame, QInputDialog, QFileDialog, QTableWidget, QTableWidgetItem,
+    QHeaderView, QAbstractItemView, QCheckBox, QMessageBox
 )
 from PyQt6.QtCore import Qt, QRectF, QTime, pyqtSignal
 from PyQt6.QtGui import QBrush, QPen, QColor, QFont, QPainter
@@ -406,6 +408,219 @@ class DetailPanel(QFrame):
         self.placeholder.show()
 
 
+class DialogImportCSV(QDialog):
+    """Dialogue pour importer des voyages depuis un fichier CSV"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Importer des voyages depuis CSV")
+        self.setMinimumSize(900, 600)
+
+        self.donnees = []
+        self.voyages_importes = []
+
+        layout = QVBoxLayout(self)
+
+        # Barre de boutons
+        btn_layout = QHBoxLayout()
+
+        btn_charger = QPushButton("📂 Sélectionner un fichier CSV")
+        btn_charger.clicked.connect(self.charger_csv)
+        btn_layout.addWidget(btn_charger)
+
+        btn_select_all = QPushButton("☑ Sélectionner tous")
+        btn_select_all.setStyleSheet("background-color: #4CAF50; color: white;")
+        btn_select_all.clicked.connect(self.selectionner_tous)
+        btn_layout.addWidget(btn_select_all)
+
+        btn_deselect_all = QPushButton("☐ Désélectionner tous")
+        btn_deselect_all.setStyleSheet("background-color: #FF9800; color: white;")
+        btn_deselect_all.clicked.connect(self.deselectionner_tous)
+        btn_layout.addWidget(btn_deselect_all)
+
+        btn_layout.addStretch()
+
+        self.label_info = QLabel("Aucun fichier chargé")
+        self.label_info.setStyleSheet("color: #6b7280;")
+        btn_layout.addWidget(self.label_info)
+
+        layout.addLayout(btn_layout)
+
+        # Tableau
+        self.tableau = QTableWidget()
+        self.tableau.setColumnCount(8)
+        self.tableau.setHorizontalHeaderLabels(['✓', 'Ligne', 'Voy.', 'Début', 'Fin', 'De', 'À', 'Js srv'])
+
+        # Configuration du tableau
+        header = self.tableau.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(0, 40)
+        for i in range(1, 8):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
+
+        self.tableau.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tableau.setAlternatingRowColors(True)
+        self.tableau.cellClicked.connect(self.on_cell_clicked)
+
+        layout.addWidget(self.tableau)
+
+        # Boutons de validation
+        btn_valid_layout = QHBoxLayout()
+        btn_valid_layout.addStretch()
+
+        btn_annuler = QPushButton("Annuler")
+        btn_annuler.clicked.connect(self.reject)
+        btn_valid_layout.addWidget(btn_annuler)
+
+        btn_importer = QPushButton("Importer les voyages sélectionnés")
+        btn_importer.setStyleSheet("background-color: #3498db; color: white; padding: 8px 16px;")
+        btn_importer.clicked.connect(self.importer_selection)
+        btn_valid_layout.addWidget(btn_importer)
+
+        layout.addLayout(btn_valid_layout)
+
+    def charger_csv(self):
+        fichier, _ = QFileDialog.getOpenFileName(
+            self,
+            "Sélectionner un fichier CSV",
+            "",
+            "Fichiers CSV (*.csv);;Tous les fichiers (*.*)"
+        )
+
+        if not fichier:
+            return
+
+        try:
+            with open(fichier, 'r', encoding='utf-8-sig') as file:
+                premiere_ligne = file.readline()
+                file.seek(0)
+
+                # Détection du délimiteur
+                delimiter = ';' if ';' in premiere_ligne else ','
+                lecture = csv.DictReader(file, delimiter=delimiter)
+                self.donnees = list(lecture)
+
+            self.remplir_tableau()
+            self.label_info.setText(f"{len(self.donnees)} voyage(s) trouvé(s)")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur lors du chargement du CSV : {e}")
+            self.donnees = []
+
+    def remplir_tableau(self):
+        self.tableau.setRowCount(len(self.donnees))
+
+        for idx, ligne in enumerate(self.donnees):
+            # Checkbox
+            checkbox = QCheckBox()
+            checkbox.setStyleSheet("margin-left: 10px;")
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            self.tableau.setCellWidget(idx, 0, checkbox_widget)
+
+            # Données
+            colonnes = ['Ligne', 'Voy.', 'Début', 'Fin', 'De', 'À', 'Js srv']
+            for col_idx, col_name in enumerate(colonnes):
+                valeur = ligne.get(col_name, '').strip() if isinstance(ligne.get(col_name, ''), str) else str(ligne.get(col_name, ''))
+                item = QTableWidgetItem(valeur)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.tableau.setItem(idx, col_idx + 1, item)
+
+    def get_checkbox(self, row):
+        """Récupère la checkbox d'une ligne"""
+        widget = self.tableau.cellWidget(row, 0)
+        if widget:
+            checkbox = widget.findChild(QCheckBox)
+            return checkbox
+        return None
+
+    def on_cell_clicked(self, row, col):
+        """Coche/décoche quand on clique sur une ligne"""
+        checkbox = self.get_checkbox(row)
+        if checkbox and col != 0:
+            checkbox.setChecked(not checkbox.isChecked())
+
+    def selectionner_tous(self):
+        for row in range(self.tableau.rowCount()):
+            checkbox = self.get_checkbox(row)
+            if checkbox:
+                checkbox.setChecked(True)
+
+    def deselectionner_tous(self):
+        for row in range(self.tableau.rowCount()):
+            checkbox = self.get_checkbox(row)
+            if checkbox:
+                checkbox.setChecked(False)
+
+    def importer_selection(self):
+        """Importe les voyages sélectionnés"""
+        self.voyages_importes = []
+
+        couleurs = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c']
+
+        for row in range(self.tableau.rowCount()):
+            checkbox = self.get_checkbox(row)
+            if checkbox and checkbox.isChecked():
+                voyage_dict = self.donnees[row]
+
+                # Convertir les heures en format décimal
+                heure_debut_str = voyage_dict.get('Début', '00:00').strip()
+                heure_fin_str = voyage_dict.get('Fin', '00:00').strip()
+
+                try:
+                    h_deb, m_deb = map(int, heure_debut_str.replace('h', ':').replace('H', ':').split(':'))
+                    heure_debut = h_deb + m_deb / 60
+                except:
+                    heure_debut = 8.0
+
+                try:
+                    h_fin, m_fin = map(int, heure_fin_str.replace('h', ':').replace('H', ':').split(':'))
+                    heure_fin = h_fin + m_fin / 60
+                except:
+                    heure_fin = heure_debut + 1
+
+                # Calculer la durée
+                duree_minutes = int((heure_fin - heure_debut) * 60)
+                if duree_minutes <= 0:
+                    duree_minutes = 60  # Durée par défaut
+
+                arret_depart = voyage_dict.get('De', '').strip()
+                arret_arrivee = voyage_dict.get('À', '').strip()
+                num_ligne = voyage_dict.get('Ligne', '').strip()
+
+                # Couleur basée sur le numéro de ligne
+                try:
+                    couleur_idx = int(num_ligne) % len(couleurs) if num_ligne.isdigit() else hash(num_ligne) % len(couleurs)
+                except:
+                    couleur_idx = row % len(couleurs)
+
+                voyage_data = {
+                    'nom': f"{arret_depart} → {arret_arrivee}",
+                    'numero_ligne': num_ligne,
+                    'numero_voyage': voyage_dict.get('Voy.', '').strip(),
+                    'heure_depart': heure_debut,
+                    'duree_minutes': duree_minutes,
+                    'arret_depart': arret_depart,
+                    'arret_arrivee': arret_arrivee,
+                    'js_srv': voyage_dict.get('Js srv', '').strip(),
+                    'couleur': couleurs[couleur_idx]
+                }
+                self.voyages_importes.append(voyage_data)
+
+        if not self.voyages_importes:
+            QMessageBox.warning(self, "Attention", "Aucun voyage sélectionné")
+            return
+
+        self.accept()
+
+    def get_voyages(self):
+        """Retourne les voyages importés"""
+        return self.voyages_importes
+
+
 class DialogAjoutVoyage(QDialog):
     """Dialogue pour ajouter un nouveau voyage"""
 
@@ -513,6 +728,10 @@ class MainWindow(QMainWindow):
 
         # Barre d'outils
         toolbar = QHBoxLayout()
+
+        btn_import_csv = QPushButton("📂 Importer CSV")
+        btn_import_csv.clicked.connect(self.importer_csv)
+        toolbar.addWidget(btn_import_csv)
 
         btn_add_service = QPushButton("➕ Ajouter Service")
         btn_add_service.clicked.connect(self.ajouter_service)
@@ -649,6 +868,48 @@ class MainWindow(QMainWindow):
     def on_voyage_deselected(self):
         self.detail_panel.clear_voyage()
         self.info_label.setText("Cliquez sur un voyage pour voir ses détails")
+
+    def importer_csv(self):
+        """Ouvre le dialogue d'import CSV et ajoute les voyages"""
+        dialog = DialogImportCSV(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            voyages = dialog.get_voyages()
+
+            if not voyages:
+                return
+
+            # Demander le service cible
+            if not self.timeline.services_data:
+                # Créer un service par défaut si aucun n'existe
+                nom, ok = QInputDialog.getText(self, "Nouveau service",
+                    "Aucun service existant. Nom du nouveau service:")
+                if ok and nom:
+                    self.timeline.ajouter_service(nom)
+                else:
+                    return
+
+            # Sélectionner le service
+            services_noms = [s['nom'] for s in self.timeline.services_data]
+            service_nom, ok = QInputDialog.getItem(
+                self,
+                "Sélectionner un service",
+                "Ajouter les voyages au service:",
+                services_noms,
+                0,
+                False
+            )
+
+            if not ok:
+                return
+
+            service_index = services_noms.index(service_nom)
+
+            # Ajouter les voyages
+            for voyage_data in voyages:
+                self.timeline.ajouter_voyage(service_index, voyage_data)
+
+            self.info_label.setText(f"{len(voyages)} voyage(s) importé(s) dans {service_nom}")
+            QMessageBox.information(self, "Succès", f"{len(voyages)} voyage(s) importé(s) avec succès!")
 
     def ajouter_service(self):
         nom, ok = QInputDialog.getText(self, "Nouveau service", "Nom du service:")
