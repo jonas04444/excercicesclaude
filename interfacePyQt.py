@@ -2,6 +2,7 @@
 Application de gestion de services de bus avec timeline
 Chaque service est une ligne horizontale, les voyages sont des rectangles sur cette ligne
 Avec panneau de détails à droite et import CSV
+Optimisation avec OR-Tools
 """
 
 import sys
@@ -12,10 +13,20 @@ from PyQt6.QtWidgets import (
     QGraphicsLineItem, QPushButton, QLabel, QSpinBox, QTimeEdit,
     QDialog, QFormLayout, QLineEdit, QComboBox, QDialogButtonBox,
     QFrame, QInputDialog, QFileDialog, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QCheckBox, QMessageBox
+    QHeaderView, QAbstractItemView, QCheckBox, QMessageBox, QTextEdit,
+    QSplitter, QListWidget, QListWidgetItem
 )
 from PyQt6.QtCore import Qt, QRectF, QTime, pyqtSignal
 from PyQt6.QtGui import QBrush, QPen, QColor, QFont, QPainter
+
+# Import OR-Tools pour l'optimisation
+try:
+    from ortools.sat.python import cp_model
+    ORTOOLS_AVAILABLE = True
+except ImportError:
+    ORTOOLS_AVAILABLE = False
+    print("⚠️ OR-Tools non installé. L'optimisation ne sera pas disponible.")
+    print("   Installez avec: pip install ortools")
 
 
 # Configuration de la timeline
@@ -24,6 +35,428 @@ HEURE_FIN = 24
 HAUTEUR_SERVICE = 50
 MARGE_GAUCHE = 80
 MARGE_HAUT = 40
+
+# Configuration de l'optimisation
+PAUSE_MIN = 5  # Minutes de pause minimum entre deux voyages
+
+
+# ==================== CLASSES D'OPTIMISATION ====================
+
+class VoyageOpt:
+    """Classe Voyage pour l'optimisation"""
+    def __init__(self, index, ligne, num, depart, arrivee, h_debut, h_fin, js_srv=''):
+        self.index = index
+        self.ligne = ligne
+        self.num = num
+        self.depart = depart  # Arrêt de départ
+        self.arrivee = arrivee  # Arrêt d'arrivée
+        self.h_debut = self.time_to_minutes(h_debut) if isinstance(h_debut, str) else int(h_debut * 60)
+        self.h_fin = self.time_to_minutes(h_fin) if isinstance(h_fin, str) else int(h_fin * 60)
+        self.js_srv = js_srv
+
+    def time_to_minutes(self, heure_str):
+        """Convertit une heure HH:MM en minutes"""
+        try:
+            h, m = heure_str.split(':')
+            return int(h) * 60 + int(m)
+        except:
+            return 0
+
+    def minutes_to_time(self, minutes):
+        """Convertit des minutes en HH:MM"""
+        h = minutes // 60
+        m = minutes % 60
+        return f"{h:02d}:{m:02d}"
+
+
+class ServiceOpt:
+    """Classe Service pour l'optimisation"""
+    def __init__(self, id, nom, debut, fin):
+        self.id = id
+        self.nom = nom
+        self.debut = self.time_to_minutes(debut) if isinstance(debut, str) else int(debut * 60)
+        self.fin = self.time_to_minutes(fin) if isinstance(fin, str) else int(fin * 60)
+        self.voyages_assignes = []  # Indices des voyages déjà assignés
+
+    def time_to_minutes(self, heure_str):
+        """Convertit une heure HH:MM en minutes"""
+        try:
+            h, m = heure_str.split(':')
+            return int(h) * 60 + int(m)
+        except:
+            return 0
+
+    def minutes_to_time(self, minutes):
+        """Convertit des minutes en HH:MM"""
+        h = minutes // 60
+        m = minutes % 60
+        return f"{h:02d}:{m:02d}"
+
+
+# Classe SolutionCollector conditionnelle (seulement si OR-Tools est disponible)
+if ORTOOLS_AVAILABLE:
+    class SolutionCollector(cp_model.CpSolverSolutionCallback):
+        """Collecteur de solutions pour OR-Tools"""
+
+        def __init__(self, x, voyages_objets, services_objets, max_solutions=10):
+            cp_model.CpSolverSolutionCallback.__init__(self)
+            self.x = x
+            self.voyages_objets = voyages_objets
+            self.services_objets = services_objets
+            self.solutions = []
+            self.max_solutions = max_solutions
+
+        def on_solution_callback(self):
+            if len(self.solutions) >= self.max_solutions:
+                self.StopSearch()
+                return
+
+            solution = {"services": {}}
+
+            for s, serv in enumerate(self.services_objets):
+                voyages_du_service = []
+
+                for v, voy in enumerate(self.voyages_objets):
+                    if self.Value(self.x[v, s]) == 1:
+                        voyages_du_service.append({
+                            "index": v,
+                            "ligne": voy.ligne,
+                            "num": voy.num,
+                            "depart": voy.depart,
+                            "arrivee": voy.arrivee,
+                            "heure_debut": voy.h_debut,
+                            "heure_fin": voy.h_fin,
+                            "heure_debut_str": voy.minutes_to_time(voy.h_debut),
+                            "heure_fin_str": voy.minutes_to_time(voy.h_fin),
+                            "js_srv": voy.js_srv,
+                            "fixe": v in serv.voyages_assignes
+                        })
+
+                voyages_du_service.sort(key=lambda x: x["heure_debut"])
+
+                solution["services"][serv.id] = {
+                    "id": serv.id,
+                    "nom": serv.nom,
+                    "debut": serv.minutes_to_time(serv.debut),
+                    "fin": serv.minutes_to_time(serv.fin),
+                    "voyages": voyages_du_service
+                }
+
+            self.solutions.append(solution)
+
+        def get_solutions(self):
+            return self.solutions
+
+
+class Optimiseur:
+    """Classe pour gérer l'optimisation des voyages"""
+
+    def __init__(self, voyages_importes, services_data, pause_min=PAUSE_MIN):
+        self.voyages_importes = voyages_importes
+        self.services_data = services_data
+        self.pause_min = pause_min
+        self.voyages_objets = []
+        self.services_objets = []
+
+    def preparer_donnees(self):
+        """Prépare les données pour l'optimisation"""
+        # Créer les objets Voyage
+        self.voyages_objets = []
+        for i, v in enumerate(self.voyages_importes):
+            heure_debut = v.get('heure_depart', 0)
+            duree = v.get('duree_minutes', 60)
+            heure_fin = heure_debut + duree / 60
+
+            voy = VoyageOpt(
+                index=i,
+                ligne=v.get('numero_ligne', ''),
+                num=v.get('numero_voyage', ''),
+                depart=v.get('arret_depart', ''),
+                arrivee=v.get('arret_arrivee', ''),
+                h_debut=heure_debut,  # Déjà en décimal
+                h_fin=heure_fin,
+                js_srv=v.get('js_srv', '')
+            )
+            self.voyages_objets.append(voy)
+
+        # Créer les objets Service
+        self.services_objets = []
+        for i, s in enumerate(self.services_data):
+            serv = ServiceOpt(
+                id=i,
+                nom=s.get('nom', f'Service {i+1}'),
+                debut=s.get('heure_debut', HEURE_DEBUT),
+                fin=s.get('heure_fin', HEURE_FIN)
+            )
+
+            # Identifier les voyages déjà assignés à ce service
+            for j, v in enumerate(self.voyages_importes):
+                if v.get('assigne', False) and v.get('service_assigne') == s.get('nom'):
+                    serv.voyages_assignes.append(j)
+
+            self.services_objets.append(serv)
+
+    def chevauchement(self, v1, v2):
+        """Vérifie si deux voyages se chevauchent (avec pause)"""
+        return (self.voyages_objets[v1].h_fin + self.pause_min > self.voyages_objets[v2].h_debut and
+                self.voyages_objets[v2].h_fin + self.pause_min > self.voyages_objets[v1].h_debut)
+
+    def optimiser(self, max_solutions=10):
+        """Lance l'optimisation et retourne les solutions"""
+        if not ORTOOLS_AVAILABLE:
+            return None, "OR-Tools n'est pas installé"
+
+        if not self.voyages_objets or not self.services_objets:
+            self.preparer_donnees()
+
+        if not self.voyages_objets:
+            return None, "Aucun voyage à optimiser"
+
+        if not self.services_objets:
+            return None, "Aucun service créé"
+
+        model = cp_model.CpModel()
+
+        n_voyages = len(self.voyages_objets)
+        n_services = len(self.services_objets)
+
+        # Variables: x[v,s] = 1 si voyage v est assigné au service s
+        x = {}
+        for v in range(n_voyages):
+            for s in range(n_services):
+                x[v, s] = model.NewBoolVar(f"voyage_{v}_service_{s}")
+
+        # Variables de succession: y[v1,v2,s] = 1 si v1 précède directement v2 sur le service s
+        y = {}
+        for v1 in range(n_voyages):
+            for v2 in range(n_voyages):
+                if v1 != v2:
+                    if self.voyages_objets[v1].h_fin + self.pause_min <= self.voyages_objets[v2].h_debut:
+                        for s in range(n_services):
+                            y[v1, v2, s] = model.NewBoolVar(f"succ_{v1}_{v2}_{s}")
+
+        # Contrainte 1: Chaque voyage est assigné à exactement un service
+        for v in range(n_voyages):
+            model.Add(sum(x[v, s] for s in range(n_services)) == 1)
+
+        # Contrainte 2: Voyages pré-assignés restent sur leur service
+        for s, serv in enumerate(self.services_objets):
+            for v in serv.voyages_assignes:
+                model.Add(x[v, s] == 1)
+
+        # Contrainte 3: Pas de chevauchement sur le même service
+        for v1 in range(n_voyages):
+            for v2 in range(v1 + 1, n_voyages):
+                if self.chevauchement(v1, v2):
+                    for s in range(n_services):
+                        model.Add(x[v1, s] + x[v2, s] <= 1)
+
+        # Contrainte 4: Respect des limites horaires des services
+        for v in range(n_voyages):
+            for s in range(n_services):
+                voy = self.voyages_objets[v]
+                serv = self.services_objets[s]
+                if voy.h_debut < serv.debut or voy.h_fin > serv.fin:
+                    model.Add(x[v, s] == 0)
+
+        # Contrainte 5: Lien entre succession et assignation
+        for (v1, v2, s) in y:
+            model.Add(x[v1, s] == 1).OnlyEnforceIf(y[v1, v2, s])
+            model.Add(x[v2, s] == 1).OnlyEnforceIf(y[v1, v2, s])
+
+        # Contrainte 6: Au plus un successeur direct
+        for v1 in range(n_voyages):
+            for s in range(n_services):
+                successeurs = [y[v1, v2, s] for v2 in range(n_voyages) if (v1, v2, s) in y]
+                if successeurs:
+                    model.Add(sum(successeurs) <= 1).OnlyEnforceIf(x[v1, s])
+
+        # Contrainte 7: Au plus un prédécesseur direct
+        for v2 in range(n_voyages):
+            for s in range(n_services):
+                predecesseurs = [y[v1, v2, s] for v1 in range(n_voyages) if (v1, v2, s) in y]
+                if predecesseurs:
+                    model.Add(sum(predecesseurs) <= 1).OnlyEnforceIf(x[v2, s])
+
+        # Contrainte 8: Continuité géographique (optionnelle - fin = début du suivant)
+        for (v1, v2, s) in y:
+            # Comparer les 3 premiers caractères (ou plus)
+            geo_ok = self.voyages_objets[v1].arrivee[:3] == self.voyages_objets[v2].depart[:3]
+            if not geo_ok:
+                model.Add(y[v1, v2, s] == 0)
+
+        # Contrainte 9: Si deux voyages sont sur le même service et peuvent se suivre,
+        # l'un doit être le successeur de l'autre (ou il y a un voyage entre)
+        for v1 in range(n_voyages):
+            for v2 in range(n_voyages):
+                if v1 != v2 and (v1, v2, 0) in y:  # Si v1 peut précéder v2
+                    for s in range(n_services):
+                        # Si v1 et v2 sont sur le même service...
+                        both_on_s = model.NewBoolVar(f"both_{v1}_{v2}_{s}")
+                        model.Add(x[v1, s] + x[v2, s] == 2).OnlyEnforceIf(both_on_s)
+                        model.Add(x[v1, s] + x[v2, s] < 2).OnlyEnforceIf(both_on_s.Not())
+
+                        # ...alors soit v1→v2 directement, soit il y a un intermédiaire
+                        intermediaires = [y[v1, vi, s] for vi in range(n_voyages)
+                                          if (v1, vi, s) in y and vi != v2 and
+                                          self.voyages_objets[vi].h_fin + self.pause_min <= self.voyages_objets[v2].h_debut]
+
+                        if (v1, v2, s) in y:
+                            # v1 est suivi de v2 OU v1 est suivi d'un intermédiaire
+                            model.Add(y[v1, v2, s] + sum(intermediaires) >= 1).OnlyEnforceIf(both_on_s)
+
+        # Résolution
+        collector = SolutionCollector(x, self.voyages_objets, self.services_objets, max_solutions)
+
+        solver = cp_model.CpSolver()
+        solver.parameters.enumerate_all_solutions = True
+        status = solver.Solve(model, collector)
+
+        if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+            return collector.get_solutions(), f"{len(collector.solutions)} solution(s) trouvée(s)"
+        elif status == cp_model.INFEASIBLE:
+            return None, "Pas de solution possible avec les contraintes actuelles"
+        else:
+            return None, f"Erreur d'optimisation (status: {status})"
+
+
+class DialogResultatsOptimisation(QDialog):
+    """Dialogue pour afficher les résultats de l'optimisation"""
+
+    solution_selectionnee = pyqtSignal(dict)
+
+    def __init__(self, solutions, parent=None):
+        super().__init__(parent)
+        self.solutions = solutions
+        self.setWindowTitle("Résultats de l'optimisation")
+        self.setMinimumSize(900, 600)
+
+        layout = QVBoxLayout(self)
+
+        # Titre
+        titre = QLabel(f"🎉 {len(solutions)} solution(s) trouvée(s)")
+        titre.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        titre.setStyleSheet("color: #27ae60; padding: 10px;")
+        layout.addWidget(titre)
+
+        # Splitter horizontal
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Liste des solutions à gauche
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        label_solutions = QLabel("Solutions:")
+        label_solutions.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        left_layout.addWidget(label_solutions)
+
+        self.liste_solutions = QListWidget()
+        for i in range(len(solutions)):
+            self.liste_solutions.addItem(f"Solution {i + 1}")
+        self.liste_solutions.currentRowChanged.connect(self.afficher_solution)
+        left_layout.addWidget(self.liste_solutions)
+
+        splitter.addWidget(left_widget)
+
+        # Détails de la solution à droite
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        label_details = QLabel("Détails:")
+        label_details.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        right_layout.addWidget(label_details)
+
+        self.text_details = QTextEdit()
+        self.text_details.setReadOnly(True)
+        self.text_details.setFont(QFont("Consolas", 10))
+        right_layout.addWidget(self.text_details)
+
+        splitter.addWidget(right_widget)
+        splitter.setSizes([200, 700])
+
+        layout.addWidget(splitter)
+
+        # Boutons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        btn_annuler = QPushButton("Fermer")
+        btn_annuler.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_annuler)
+
+        btn_appliquer = QPushButton("Appliquer cette solution")
+        btn_appliquer.setStyleSheet("background-color: #27ae60; color: white; padding: 8px 16px;")
+        btn_appliquer.clicked.connect(self.appliquer_solution)
+        btn_layout.addWidget(btn_appliquer)
+
+        layout.addLayout(btn_layout)
+
+        # Afficher la première solution
+        if solutions:
+            self.liste_solutions.setCurrentRow(0)
+
+    def afficher_solution(self, index):
+        """Affiche les détails d'une solution"""
+        if index < 0 or index >= len(self.solutions):
+            return
+
+        solution = self.solutions[index]
+        text = ""
+
+        total_voyages = 0
+        total_fixes = 0
+        total_ajoutes = 0
+
+        for service_id, service_data in solution["services"].items():
+            voyages = service_data["voyages"]
+            text += f"\n{'='*55}\n"
+            text += f"📋 {service_data['nom']} ({service_data['debut']} - {service_data['fin']})\n"
+            text += f"   {len(voyages)} voyage(s)\n"
+            text += f"{'='*55}\n\n"
+
+            if voyages:
+                for voyage in voyages:
+                    is_fixe = voyage.get("fixe", False)
+                    tag = "🔒 FIXE  " if is_fixe else "✨ AJOUTÉ"
+                    num_str = str(voyage['num'])
+                    text += f"  {tag} | {voyage['ligne']}-{num_str:>4} | "
+                    text += f"{voyage['heure_debut_str']}-{voyage['heure_fin_str']} | "
+                    text += f"{voyage['depart']} → {voyage['arrivee']}"
+                    if voyage.get('js_srv'):
+                        text += f" [{voyage['js_srv']}]"
+                    text += "\n"
+
+                    total_voyages += 1
+                    if is_fixe:
+                        total_fixes += 1
+                    else:
+                        total_ajoutes += 1
+            else:
+                text += "  (aucun voyage assigné)\n"
+
+            text += "\n"
+
+        # Résumé
+        text += f"\n{'='*55}\n"
+        text += f"📊 RÉSUMÉ\n"
+        text += f"{'='*55}\n"
+        text += f"  Total voyages: {total_voyages}\n"
+        text += f"  - Fixes (pré-assignés): {total_fixes}\n"
+        text += f"  - Ajoutés par l'optimisation: {total_ajoutes}\n"
+
+        self.text_details.setText(text)
+
+    def appliquer_solution(self):
+        """Applique la solution sélectionnée"""
+        index = self.liste_solutions.currentRow()
+        if index >= 0 and index < len(self.solutions):
+            self.solution_selectionnee.emit(self.solutions[index])
+            self.accept()
+
+
+# ==================== FIN CLASSES D'OPTIMISATION ====================
 
 
 class VoyageItem(QGraphicsRectItem):
@@ -1363,12 +1796,19 @@ class MainWindow(QMainWindow):
 
         main_layout = QVBoxLayout(central_widget)
 
-        # Barre d'outils simplifiée
+        # Barre d'outils
         toolbar = QHBoxLayout()
 
         btn_clear = QPushButton("🗑️ Tout effacer")
         btn_clear.clicked.connect(self.effacer_tout)
         toolbar.addWidget(btn_clear)
+
+        # Bouton Optimiser
+        self.btn_optimiser = QPushButton("🔧 Optimiser")
+        self.btn_optimiser.setStyleSheet("background-color: #8e44ad; color: white; padding: 5px 15px; font-weight: bold;")
+        self.btn_optimiser.clicked.connect(self.lancer_optimisation)
+        self.btn_optimiser.setToolTip("Lancer l'optimisation OR-Tools pour assigner automatiquement les voyages")
+        toolbar.addWidget(self.btn_optimiser)
 
         toolbar.addStretch()
 
@@ -1422,6 +1862,91 @@ class MainWindow(QMainWindow):
             if item.voyage_data.get('id') == voyage_data.get('id'):
                 self.timeline.select_voyage(item)
                 break
+
+    def lancer_optimisation(self):
+        """Lance l'optimisation OR-Tools"""
+        if not ORTOOLS_AVAILABLE:
+            QMessageBox.warning(
+                self,
+                "OR-Tools non disponible",
+                "OR-Tools n'est pas installé.\nInstallez-le avec: pip install ortools"
+            )
+            return
+
+        # Vérifier qu'il y a des voyages
+        if not self.panneau_voyages.voyages_importes:
+            QMessageBox.warning(self, "Attention", "Aucun voyage importé. Importez d'abord un fichier CSV.")
+            return
+
+        # Vérifier qu'il y a des services
+        if not self.timeline.services_data:
+            QMessageBox.warning(self, "Attention", "Aucun service créé. Créez d'abord des services.")
+            return
+
+        self.info_label.setText("⏳ Optimisation en cours...")
+        QApplication.processEvents()
+
+        # Créer l'optimiseur
+        optimiseur = Optimiseur(
+            self.panneau_voyages.voyages_importes,
+            self.timeline.services_data
+        )
+
+        # Lancer l'optimisation
+        solutions, message = optimiseur.optimiser(max_solutions=10)
+
+        if solutions:
+            self.info_label.setText(f"✅ {message}")
+
+            # Afficher la fenêtre de résultats
+            dialog = DialogResultatsOptimisation(solutions, self)
+            dialog.solution_selectionnee.connect(self.appliquer_solution)
+            dialog.exec()
+        else:
+            self.info_label.setText(f"❌ {message}")
+            QMessageBox.warning(self, "Optimisation", message)
+
+    def appliquer_solution(self, solution):
+        """Applique la solution sélectionnée"""
+        # Effacer les assignations actuelles
+        for v in self.panneau_voyages.voyages_importes:
+            v['assigne'] = False
+            v['service_assigne'] = None
+
+        # Vider les voyages des services
+        for service in self.timeline.services_data:
+            service['voyages'] = []
+
+        # Appliquer la nouvelle solution
+        for service_id, service_data in solution["services"].items():
+            if isinstance(service_id, int) and service_id < len(self.timeline.services_data):
+                service = self.timeline.services_data[service_id]
+
+                for voyage_sol in service_data["voyages"]:
+                    # Retrouver le voyage original
+                    idx = voyage_sol["index"]
+                    if idx < len(self.panneau_voyages.voyages_importes):
+                        voyage_original = self.panneau_voyages.voyages_importes[idx]
+
+                        # Créer une copie pour le service
+                        voyage_copie = voyage_original.copy()
+                        voyage_copie['id'] = id(voyage_copie)
+                        voyage_copie['original_id'] = voyage_original.get('id')
+
+                        # Ajouter au service
+                        service['voyages'].append(voyage_copie)
+
+                        # Marquer comme assigné
+                        voyage_original['assigne'] = True
+                        voyage_original['service_assigne'] = service['nom']
+
+        # Rafraîchir l'interface
+        self.timeline._redessiner_tout()
+        self.panneau_voyages.refresh_liste_importes()
+        self.panneau_voyages.refresh_services()
+
+        self.info_label.setText("✅ Solution appliquée avec succès!")
+        QMessageBox.information(self, "Succès", "La solution a été appliquée à tous les services.")
 
     def effacer_tout(self):
         """Efface tous les services et voyages"""
