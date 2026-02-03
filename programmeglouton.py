@@ -138,12 +138,13 @@ class Optimiseur:
                 voy2.h_fin + self.pause_min > voy1.h_debut)
 
     def continuite_geo(self, arrivee, depart):
-        """Vérifie la continuité géographique entre deux arrêts"""
+        """Vérifie la continuité géographique entre deux arrêts (3 premiers caractères)"""
         if not arrivee or not depart:
             return True  # Si pas d'info, on autorise
-        # Comparer les 3-4 premiers caractères (préfixe de l'arrêt)
-        min_len = min(len(arrivee), len(depart), 4)
-        return arrivee[:min_len].upper() == depart[:min_len].upper()
+        # Comparer les 3 premiers caractères (en ignorant la casse et les espaces)
+        arr_clean = arrivee.strip().upper()[:3]
+        dep_clean = depart.strip().upper()[:3]
+        return arr_clean == dep_clean
 
     def trouver_dernier_voyage(self, voyages_indices):
         """Trouve le dernier voyage (par heure de fin) dans une liste d'indices"""
@@ -331,29 +332,57 @@ class Optimiseur:
             return None, "Aucun service créé"
 
         try:
+            import random
+
             solutions = []
             solutions_hashes = set()
             meilleur_non_assignes = len(self.voyages_objets)
 
+            n_services = len(self.services_objets)
+            n_voyages = len(self.voyages_objets)
+
             # Essayer différentes combinaisons de tri
             tris_voyages = ['debut', 'fin', 'duree', 'duree_desc', 'ligne', 'depart']
             tris_services = ['normal', 'debut', 'fin', 'inverse']
-            options_geo = [True, False]  # Avec et sans contrainte géo stricte
 
+            # D'abord essayer AVEC contrainte géo (prioritaire)
             for tri_v in tris_voyages:
                 for tri_s in tris_services:
-                    for verifier_geo in options_geo:
-                        solution, non_assignes, _ = self.optimiser_glouton(tri_v, tri_s, verifier_geo)
+                    solution, non_assignes, _ = self.optimiser_glouton(tri_v, tri_s, verifier_geo=True)
 
-                        # Vérifier si c'est une nouvelle solution
+                    sol_hash = self._solution_hash(solution)
+                    if sol_hash not in solutions_hashes:
+                        solutions_hashes.add(sol_hash)
+                        solution["methode"] = f"Tri: {tri_v}/{tri_s} (avec continuité géo)"
+                        solution["non_assignes"] = non_assignes
+                        solution["avec_geo"] = True
+                        solutions.append(solution)
+
+                        if non_assignes < meilleur_non_assignes:
+                            meilleur_non_assignes = non_assignes
+
+                    if len(solutions) >= max_solutions:
+                        break
+                if len(solutions) >= max_solutions:
+                    break
+
+            # Si pas assez de solutions, essayer avec permutations de services
+            if len(solutions) < max_solutions and n_services <= 8:
+                import itertools
+                perms = list(itertools.permutations(range(n_services)))
+                random.shuffle(perms)  # Mélanger pour avoir de la variété
+
+                for perm in perms[:20]:  # Limiter à 20 permutations
+                    for tri_v in ['debut', 'fin', 'ligne']:
+                        # Créer un ordre de services basé sur la permutation
+                        solution, non_assignes, _ = self.optimiser_avec_ordre(tri_v, list(perm), verifier_geo=True)
+
                         sol_hash = self._solution_hash(solution)
                         if sol_hash not in solutions_hashes:
                             solutions_hashes.add(sol_hash)
-
-                            # Ajouter info sur la méthode utilisée
-                            solution["methode"] = f"Tri voyages: {tri_v}, Tri services: {tri_s}, Géo: {verifier_geo}"
+                            solution["methode"] = f"Permutation services (avec géo)"
                             solution["non_assignes"] = non_assignes
-
+                            solution["avec_geo"] = True
                             solutions.append(solution)
 
                             if non_assignes < meilleur_non_assignes:
@@ -363,24 +392,93 @@ class Optimiseur:
                             break
                     if len(solutions) >= max_solutions:
                         break
-                if len(solutions) >= max_solutions:
-                    break
 
-            # Trier les solutions par nombre de voyages non assignés
-            solutions.sort(key=lambda s: s.get("non_assignes", 999))
+            # Ensuite essayer SANS contrainte géo (pour comparer)
+            if len(solutions) < max_solutions:
+                for tri_v in tris_voyages:
+                    for tri_s in tris_services:
+                        solution, non_assignes, _ = self.optimiser_glouton(tri_v, tri_s, verifier_geo=False)
+
+                        sol_hash = self._solution_hash(solution)
+                        if sol_hash not in solutions_hashes:
+                            solutions_hashes.add(sol_hash)
+                            solution["methode"] = f"Tri: {tri_v}/{tri_s} (SANS contrainte géo)"
+                            solution["non_assignes"] = non_assignes
+                            solution["avec_geo"] = False
+                            solutions.append(solution)
+
+                            if non_assignes < meilleur_non_assignes:
+                                meilleur_non_assignes = non_assignes
+
+                        if len(solutions) >= max_solutions:
+                            break
+                    if len(solutions) >= max_solutions:
+                        break
+
+            # Trier: d'abord celles avec géo, puis par non_assignes
+            solutions.sort(key=lambda s: (not s.get("avec_geo", False), s.get("non_assignes", 999)))
 
             if not solutions:
                 return None, "Aucune solution trouvée"
 
+            # Compter les solutions avec/sans ruptures géo
+            avec_geo = sum(1 for s in solutions if s.get("avec_geo", False))
+
+            msg = f"{len(solutions)} solution(s) trouvée(s)"
+            if avec_geo > 0:
+                msg += f" ({avec_geo} respectant la continuité géo)"
             if meilleur_non_assignes > 0:
-                return solutions, f"{len(solutions)} solution(s) trouvée(s) - ⚠️ {meilleur_non_assignes} voyage(s) non assigné(s) minimum"
+                msg += f" - ⚠️ {meilleur_non_assignes} voyage(s) non assigné(s) min."
             else:
-                return solutions, f"{len(solutions)} solution(s) trouvée(s) - Tous les voyages assignés ✓"
+                msg += " - Tous les voyages assignés ✓"
+
+            return solutions, msg
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             return None, f"Erreur lors de l'optimisation: {str(e)}"
+
+    def optimiser_avec_ordre(self, tri_voyages, ordre_services, verifier_geo=True):
+        """Optimise avec un ordre de services spécifique"""
+        n_voyages = len(self.voyages_objets)
+        n_services = len(self.services_objets)
+
+        assignations = [list(serv.voyages_assignes) for serv in self.services_objets]
+        voyage_assigne = [False] * n_voyages
+
+        for s_idx, serv in enumerate(self.services_objets):
+            for v_idx in serv.voyages_assignes:
+                if v_idx < n_voyages:
+                    voyage_assigne[v_idx] = True
+
+        # Trier les voyages
+        if tri_voyages == 'debut':
+            voyages_tries = sorted(range(n_voyages), key=lambda i: self.voyages_objets[i].h_debut)
+        elif tri_voyages == 'fin':
+            voyages_tries = sorted(range(n_voyages), key=lambda i: self.voyages_objets[i].h_fin)
+        elif tri_voyages == 'ligne':
+            voyages_tries = sorted(range(n_voyages), key=lambda i: (self.voyages_objets[i].ligne, self.voyages_objets[i].h_debut))
+        else:
+            voyages_tries = list(range(n_voyages))
+
+        # Assigner les voyages
+        for v_idx in voyages_tries:
+            if voyage_assigne[v_idx]:
+                continue
+
+            voy = self.voyages_objets[v_idx]
+
+            for s_idx in ordre_services:
+                if self.voyage_compatible_service(voy, s_idx, assignations[s_idx], verifier_geo):
+                    assignations[s_idx].append(v_idx)
+                    voyage_assigne[v_idx] = True
+                    break
+
+        solution = self._construire_solution(assignations)
+        non_assignes = sum(1 for a in voyage_assigne if not a)
+
+        return solution, non_assignes, voyage_assigne
 
 
 class DialogResultatsOptimisation(QDialog):
@@ -500,13 +598,11 @@ class DialogResultatsOptimisation(QDialog):
                     # Vérifier la continuité géographique avec le voyage précédent
                     geo_warning = ""
                     if prev_voyage:
-                        prev_arrivee = prev_voyage.get('arrivee', '')
-                        curr_depart = voyage.get('depart', '')
-                        if prev_arrivee and curr_depart:
-                            min_len = min(len(prev_arrivee), len(curr_depart), 4)
-                            if prev_arrivee[:min_len].upper() != curr_depart[:min_len].upper():
-                                geo_warning = " ⚠️ RUPTURE GÉO"
-                                problemes_geo.append(f"{service_data['nom']}: {prev_arrivee} → {curr_depart}")
+                        prev_arrivee = prev_voyage.get('arrivee', '').strip().upper()[:3]
+                        curr_depart = voyage.get('depart', '').strip().upper()[:3]
+                        if prev_arrivee and curr_depart and prev_arrivee != curr_depart:
+                            geo_warning = " ⚠️ RUPTURE GÉO"
+                            problemes_geo.append(f"{service_data['nom']}: {prev_voyage.get('arrivee', '')} → {voyage.get('depart', '')}")
 
                     text += f"  {tag} | {voyage['ligne']}-{num_str:>4} | "
                     text += f"{voyage['heure_debut_str']}-{voyage['heure_fin_str']} | "
