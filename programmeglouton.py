@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QRectF, QTime, pyqtSignal
 from PyQt6.QtGui import QBrush, QPen, QColor, QFont, QPainter
 
+
 # Configuration de la timeline
 HEURE_DEBUT = 4
 HEURE_FIN = 24
@@ -34,7 +35,6 @@ PAUSE_MIN = 5  # Minutes de pause minimum entre deux voyages
 
 class VoyageOpt:
     """Classe Voyage pour l'optimisation"""
-
     def __init__(self, index, ligne, num, depart, arrivee, h_debut, h_fin, js_srv=''):
         self.index = index
         self.ligne = ligne
@@ -62,7 +62,6 @@ class VoyageOpt:
 
 class ServiceOpt:
     """Classe Service pour l'optimisation"""
-
     def __init__(self, id, nom, debut, fin):
         self.id = id
         self.nom = nom
@@ -86,7 +85,7 @@ class ServiceOpt:
 
 
 class Optimiseur:
-    """Classe pour gérer l'optimisation des voyages - Version Glouton (rapide)"""
+    """Classe pour gérer l'optimisation des voyages - Version Glouton avec continuité géographique"""
 
     def __init__(self, voyages_importes, services_data, pause_min=PAUSE_MIN):
         self.voyages_importes = voyages_importes
@@ -121,7 +120,7 @@ class Optimiseur:
         for i, s in enumerate(self.services_data):
             serv = ServiceOpt(
                 id=i,
-                nom=s.get('nom', f'Service {i + 1}'),
+                nom=s.get('nom', f'Service {i+1}'),
                 debut=s.get('heure_debut', HEURE_DEBUT),
                 fin=s.get('heure_fin', HEURE_FIN)
             )
@@ -138,7 +137,22 @@ class Optimiseur:
         return (voy1.h_fin + self.pause_min > voy2.h_debut and
                 voy2.h_fin + self.pause_min > voy1.h_debut)
 
-    def voyage_compatible_service(self, voy, service_idx, voyages_assignes):
+    def continuite_geo(self, arrivee, depart):
+        """Vérifie la continuité géographique entre deux arrêts"""
+        if not arrivee or not depart:
+            return True  # Si pas d'info, on autorise
+        # Comparer les 3-4 premiers caractères (préfixe de l'arrêt)
+        min_len = min(len(arrivee), len(depart), 4)
+        return arrivee[:min_len].upper() == depart[:min_len].upper()
+
+    def trouver_dernier_voyage(self, voyages_indices):
+        """Trouve le dernier voyage (par heure de fin) dans une liste d'indices"""
+        if not voyages_indices:
+            return None
+        dernier_idx = max(voyages_indices, key=lambda i: self.voyages_objets[i].h_fin)
+        return self.voyages_objets[dernier_idx]
+
+    def voyage_compatible_service(self, voy, service_idx, voyages_assignes, verifier_geo=True):
         """Vérifie si un voyage peut être ajouté à un service"""
         serv = self.services_objets[service_idx]
 
@@ -151,12 +165,33 @@ class Optimiseur:
             if self.chevauchement(voy, self.voyages_objets[v_idx]):
                 return False
 
+        # Vérifier la continuité géographique
+        if verifier_geo and voyages_assignes:
+            # Trouver le voyage qui se termine juste avant le nouveau
+            predecesseur = None
+            for v_idx in voyages_assignes:
+                v = self.voyages_objets[v_idx]
+                if v.h_fin + self.pause_min <= voy.h_debut:
+                    if predecesseur is None or v.h_fin > predecesseur.h_fin:
+                        predecesseur = v
+
+            # Si on a un prédécesseur, vérifier la continuité géographique
+            if predecesseur:
+                if not self.continuite_geo(predecesseur.arrivee, voy.depart):
+                    return False
+
+            # Vérifier aussi si le nouveau voyage peut précéder un existant
+            for v_idx in voyages_assignes:
+                v = self.voyages_objets[v_idx]
+                if voy.h_fin + self.pause_min <= v.h_debut:
+                    # Le nouveau voyage précède v, vérifier la continuité
+                    if not self.continuite_geo(voy.arrivee, v.depart):
+                        return False
+
         return True
 
-    def optimiser_glouton(self):
-        """Algorithme glouton : assigne les voyages un par un au premier service disponible"""
-        self.preparer_donnees()
-
+    def optimiser_glouton(self, tri_voyages, tri_services, verifier_geo=True):
+        """Algorithme glouton avec paramètres de tri"""
         n_voyages = len(self.voyages_objets)
         n_services = len(self.services_objets)
 
@@ -170,23 +205,81 @@ class Optimiseur:
                 if v_idx < n_voyages:
                     voyage_assigne[v_idx] = True
 
-        # Trier les voyages par heure de début
-        voyages_tries = sorted(range(n_voyages), key=lambda i: self.voyages_objets[i].h_debut)
+        # Trier les services selon le critère
+        if tri_services == 'debut':
+            services_ordre = sorted(range(n_services), key=lambda i: self.services_objets[i].debut)
+        elif tri_services == 'fin':
+            services_ordre = sorted(range(n_services), key=lambda i: self.services_objets[i].fin)
+        elif tri_services == 'inverse':
+            services_ordre = list(range(n_services - 1, -1, -1))
+        else:
+            services_ordre = list(range(n_services))
 
-        # Assigner chaque voyage non assigné au premier service compatible
+        # Trier les voyages selon le critère
+        if tri_voyages == 'debut':
+            voyages_tries = sorted(range(n_voyages), key=lambda i: self.voyages_objets[i].h_debut)
+        elif tri_voyages == 'fin':
+            voyages_tries = sorted(range(n_voyages), key=lambda i: self.voyages_objets[i].h_fin)
+        elif tri_voyages == 'duree':
+            voyages_tries = sorted(range(n_voyages), key=lambda i: self.voyages_objets[i].h_fin - self.voyages_objets[i].h_debut)
+        elif tri_voyages == 'duree_desc':
+            voyages_tries = sorted(range(n_voyages), key=lambda i: self.voyages_objets[i].h_fin - self.voyages_objets[i].h_debut, reverse=True)
+        elif tri_voyages == 'ligne':
+            voyages_tries = sorted(range(n_voyages), key=lambda i: (self.voyages_objets[i].ligne, self.voyages_objets[i].h_debut))
+        elif tri_voyages == 'depart':
+            voyages_tries = sorted(range(n_voyages), key=lambda i: (self.voyages_objets[i].depart, self.voyages_objets[i].h_debut))
+        else:
+            voyages_tries = list(range(n_voyages))
+
+        # Assigner chaque voyage non assigné
         for v_idx in voyages_tries:
             if voyage_assigne[v_idx]:
                 continue
 
             voy = self.voyages_objets[v_idx]
 
-            for s_idx in range(n_services):
-                if self.voyage_compatible_service(voy, s_idx, assignations[s_idx]):
-                    assignations[s_idx].append(v_idx)
-                    voyage_assigne[v_idx] = True
-                    break
+            # Chercher le meilleur service (celui où le voyage s'insère le mieux géographiquement)
+            meilleur_service = None
+            meilleur_score = -1
+
+            for s_idx in services_ordre:
+                if self.voyage_compatible_service(voy, s_idx, assignations[s_idx], verifier_geo):
+                    # Calculer un score de compatibilité géographique
+                    score = 0
+
+                    # Bonus si continuité avec le prédécesseur
+                    for v_exist_idx in assignations[s_idx]:
+                        v_exist = self.voyages_objets[v_exist_idx]
+                        if v_exist.h_fin + self.pause_min <= voy.h_debut:
+                            if self.continuite_geo(v_exist.arrivee, voy.depart):
+                                score += 10
+
+                    # Bonus si continuité avec le successeur
+                    for v_exist_idx in assignations[s_idx]:
+                        v_exist = self.voyages_objets[v_exist_idx]
+                        if voy.h_fin + self.pause_min <= v_exist.h_debut:
+                            if self.continuite_geo(voy.arrivee, v_exist.depart):
+                                score += 10
+
+                    # Bonus si le service a moins de voyages (équilibrage)
+                    score += (10 - len(assignations[s_idx]))
+
+                    if score > meilleur_score:
+                        meilleur_score = score
+                        meilleur_service = s_idx
+
+            if meilleur_service is not None:
+                assignations[meilleur_service].append(v_idx)
+                voyage_assigne[v_idx] = True
 
         # Construire la solution
+        solution = self._construire_solution(assignations)
+        non_assignes = sum(1 for a in voyage_assigne if not a)
+
+        return solution, non_assignes, voyage_assigne
+
+    def _construire_solution(self, assignations):
+        """Construit l'objet solution à partir des assignations"""
         solution = {"services": {}}
         for s_idx, serv in enumerate(self.services_objets):
             voyages_du_service = []
@@ -216,15 +309,20 @@ class Optimiseur:
                 "voyages": voyages_du_service
             }
 
-        # Compter les non-assignés
-        non_assignes = sum(1 for a in voyage_assigne if not a)
+        return solution
 
-        return solution, non_assignes, voyage_assigne
+    def _solution_hash(self, solution):
+        """Génère un hash pour identifier une solution unique"""
+        hash_parts = []
+        for s_id in sorted(solution["services"].keys()):
+            service = solution["services"][s_id]
+            indices = tuple(v["index"] for v in service["voyages"])
+            hash_parts.append((s_id, indices))
+        return str(hash_parts)
 
     def optimiser(self, max_solutions=10, timeout_seconds=30):
-        """Lance l'optimisation et retourne les solutions"""
-        if not self.voyages_objets or not self.services_objets:
-            self.preparer_donnees()
+        """Lance l'optimisation et retourne plusieurs solutions"""
+        self.preparer_donnees()
 
         if not self.voyages_objets:
             return None, "Aucun voyage à optimiser"
@@ -233,97 +331,56 @@ class Optimiseur:
             return None, "Aucun service créé"
 
         try:
-            # Utiliser l'algorithme glouton (rapide et fiable)
-            solution, non_assignes, voyage_assigne = self.optimiser_glouton()
+            solutions = []
+            solutions_hashes = set()
+            meilleur_non_assignes = len(self.voyages_objets)
 
-            if non_assignes > 0:
-                # Essayer avec différents ordres pour trouver d'autres solutions
-                solutions = [solution]
+            # Essayer différentes combinaisons de tri
+            tris_voyages = ['debut', 'fin', 'duree', 'duree_desc', 'ligne', 'depart']
+            tris_services = ['normal', 'debut', 'fin', 'inverse']
+            options_geo = [True, False]  # Avec et sans contrainte géo stricte
 
-                # Essayer en triant par différents critères
-                for tri_key in ['fin', 'duree', 'ligne']:
-                    sol2, na2, _ = self._optimiser_avec_tri(tri_key)
-                    if na2 <= non_assignes and sol2 not in solutions:
-                        solutions.append(sol2)
-                        if na2 < non_assignes:
-                            non_assignes = na2
+            for tri_v in tris_voyages:
+                for tri_s in tris_services:
+                    for verifier_geo in options_geo:
+                        solution, non_assignes, _ = self.optimiser_glouton(tri_v, tri_s, verifier_geo)
 
-                if non_assignes > 0:
-                    return solutions, f"{len(solutions)} solution(s) trouvée(s) - ⚠️ {non_assignes} voyage(s) non assigné(s) (pas assez de services)"
-                else:
-                    return solutions, f"{len(solutions)} solution(s) trouvée(s)"
-            else:
-                return [solution], "1 solution trouvée - Tous les voyages assignés ✓"
+                        # Vérifier si c'est une nouvelle solution
+                        sol_hash = self._solution_hash(solution)
+                        if sol_hash not in solutions_hashes:
+                            solutions_hashes.add(sol_hash)
 
-        except Exception as e:
-            return None, f"Erreur lors de l'optimisation: {str(e)}"
+                            # Ajouter info sur la méthode utilisée
+                            solution["methode"] = f"Tri voyages: {tri_v}, Tri services: {tri_s}, Géo: {verifier_geo}"
+                            solution["non_assignes"] = non_assignes
 
-    def _optimiser_avec_tri(self, tri_key):
-        """Optimise avec un tri différent"""
-        n_voyages = len(self.voyages_objets)
-        n_services = len(self.services_objets)
+                            solutions.append(solution)
 
-        assignations = [list(serv.voyages_assignes) for serv in self.services_objets]
-        voyage_assigne = [False] * n_voyages
+                            if non_assignes < meilleur_non_assignes:
+                                meilleur_non_assignes = non_assignes
 
-        for s_idx, serv in enumerate(self.services_objets):
-            for v_idx in serv.voyages_assignes:
-                if v_idx < n_voyages:
-                    voyage_assigne[v_idx] = True
-
-        # Trier selon le critère
-        if tri_key == 'fin':
-            voyages_tries = sorted(range(n_voyages), key=lambda i: self.voyages_objets[i].h_fin)
-        elif tri_key == 'duree':
-            voyages_tries = sorted(range(n_voyages),
-                                   key=lambda i: self.voyages_objets[i].h_fin - self.voyages_objets[i].h_debut)
-        else:
-            voyages_tries = sorted(range(n_voyages), key=lambda i: self.voyages_objets[i].ligne)
-
-        for v_idx in voyages_tries:
-            if voyage_assigne[v_idx]:
-                continue
-
-            voy = self.voyages_objets[v_idx]
-
-            for s_idx in range(n_services):
-                if self.voyage_compatible_service(voy, s_idx, assignations[s_idx]):
-                    assignations[s_idx].append(v_idx)
-                    voyage_assigne[v_idx] = True
+                        if len(solutions) >= max_solutions:
+                            break
+                    if len(solutions) >= max_solutions:
+                        break
+                if len(solutions) >= max_solutions:
                     break
 
-        # Construire la solution
-        solution = {"services": {}}
-        for s_idx, serv in enumerate(self.services_objets):
-            voyages_du_service = []
-            for v_idx in assignations[s_idx]:
-                voy = self.voyages_objets[v_idx]
-                voyages_du_service.append({
-                    "index": v_idx,
-                    "ligne": voy.ligne,
-                    "num": voy.num,
-                    "depart": voy.depart,
-                    "arrivee": voy.arrivee,
-                    "heure_debut": voy.h_debut,
-                    "heure_fin": voy.h_fin,
-                    "heure_debut_str": voy.minutes_to_time(voy.h_debut),
-                    "heure_fin_str": voy.minutes_to_time(voy.h_fin),
-                    "js_srv": voy.js_srv,
-                    "fixe": v_idx in serv.voyages_assignes
-                })
+            # Trier les solutions par nombre de voyages non assignés
+            solutions.sort(key=lambda s: s.get("non_assignes", 999))
 
-            voyages_du_service.sort(key=lambda x: x["heure_debut"])
+            if not solutions:
+                return None, "Aucune solution trouvée"
 
-            solution["services"][s_idx] = {
-                "id": s_idx,
-                "nom": serv.nom,
-                "debut": serv.minutes_to_time(serv.debut),
-                "fin": serv.minutes_to_time(serv.fin),
-                "voyages": voyages_du_service
-            }
+            if meilleur_non_assignes > 0:
+                return solutions, f"{len(solutions)} solution(s) trouvée(s) - ⚠️ {meilleur_non_assignes} voyage(s) non assigné(s) minimum"
+            else:
+                return solutions, f"{len(solutions)} solution(s) trouvée(s) - Tous les voyages assignés ✓"
 
-        non_assignes = sum(1 for a in voyage_assigne if not a)
-        return solution, non_assignes, voyage_assigne
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return None, f"Erreur lors de l'optimisation: {str(e)}"
 
 
 class DialogResultatsOptimisation(QDialog):
@@ -411,46 +468,79 @@ class DialogResultatsOptimisation(QDialog):
         solution = self.solutions[index]
         text = ""
 
+        # Afficher la méthode utilisée si disponible
+        if "methode" in solution:
+            text += f"📊 Méthode: {solution['methode']}\n"
+        if "non_assignes" in solution:
+            na = solution['non_assignes']
+            if na > 0:
+                text += f"⚠️ Voyages non assignés: {na}\n"
+            else:
+                text += f"✅ Tous les voyages assignés\n"
+
         total_voyages = 0
         total_fixes = 0
         total_ajoutes = 0
+        problemes_geo = []
 
         for service_id, service_data in solution["services"].items():
             voyages = service_data["voyages"]
-            text += f"\n{'=' * 55}\n"
+            text += f"\n{'='*60}\n"
             text += f"📋 {service_data['nom']} ({service_data['debut']} - {service_data['fin']})\n"
             text += f"   {len(voyages)} voyage(s)\n"
-            text += f"{'=' * 55}\n\n"
+            text += f"{'='*60}\n\n"
 
             if voyages:
+                prev_voyage = None
                 for voyage in voyages:
                     is_fixe = voyage.get("fixe", False)
                     tag = "🔒 FIXE  " if is_fixe else "✨ AJOUTÉ"
                     num_str = str(voyage['num'])
+
+                    # Vérifier la continuité géographique avec le voyage précédent
+                    geo_warning = ""
+                    if prev_voyage:
+                        prev_arrivee = prev_voyage.get('arrivee', '')
+                        curr_depart = voyage.get('depart', '')
+                        if prev_arrivee and curr_depart:
+                            min_len = min(len(prev_arrivee), len(curr_depart), 4)
+                            if prev_arrivee[:min_len].upper() != curr_depart[:min_len].upper():
+                                geo_warning = " ⚠️ RUPTURE GÉO"
+                                problemes_geo.append(f"{service_data['nom']}: {prev_arrivee} → {curr_depart}")
+
                     text += f"  {tag} | {voyage['ligne']}-{num_str:>4} | "
                     text += f"{voyage['heure_debut_str']}-{voyage['heure_fin_str']} | "
                     text += f"{voyage['depart']} → {voyage['arrivee']}"
                     if voyage.get('js_srv'):
                         text += f" [{voyage['js_srv']}]"
-                    text += "\n"
+                    text += f"{geo_warning}\n"
 
                     total_voyages += 1
                     if is_fixe:
                         total_fixes += 1
                     else:
                         total_ajoutes += 1
+
+                    prev_voyage = voyage
             else:
                 text += "  (aucun voyage assigné)\n"
 
             text += "\n"
 
         # Résumé
-        text += f"\n{'=' * 55}\n"
+        text += f"\n{'='*60}\n"
         text += f"📊 RÉSUMÉ\n"
-        text += f"{'=' * 55}\n"
-        text += f"  Total voyages: {total_voyages}\n"
+        text += f"{'='*60}\n"
+        text += f"  Total voyages assignés: {total_voyages}\n"
         text += f"  - Fixes (pré-assignés): {total_fixes}\n"
         text += f"  - Ajoutés par l'optimisation: {total_ajoutes}\n"
+
+        if problemes_geo:
+            text += f"\n⚠️ RUPTURES DE CONTINUITÉ GÉOGRAPHIQUE ({len(problemes_geo)}):\n"
+            for pb in problemes_geo[:10]:  # Limiter à 10
+                text += f"  • {pb}\n"
+            if len(problemes_geo) > 10:
+                text += f"  ... et {len(problemes_geo) - 10} autres\n"
 
         self.text_details.setText(text)
 
@@ -982,8 +1072,7 @@ class PanneauVoyages(QFrame):
         # Compter assignés vs non assignés
         nb_assignes = sum(1 for v in self.voyages_importes if v.get('assigne', False))
         nb_total = len(self.voyages_importes)
-        self.label_count_importes.setText(
-            f"{nb_total} voyage(s) ({nb_assignes} assigné(s), {nb_total - nb_assignes} en attente)")
+        self.label_count_importes.setText(f"{nb_total} voyage(s) ({nb_assignes} assigné(s), {nb_total - nb_assignes} en attente)")
 
     def refresh_services(self):
         """Met à jour la liste des services dans le combobox"""
@@ -1515,8 +1604,7 @@ class DialogImportCSV(QDialog):
             # Données
             colonnes = ['Ligne', 'Voy.', 'Début', 'Fin', 'De', 'À', 'Js srv']
             for col_idx, col_name in enumerate(colonnes):
-                valeur = ligne.get(col_name, '').strip() if isinstance(ligne.get(col_name, ''), str) else str(
-                    ligne.get(col_name, ''))
+                valeur = ligne.get(col_name, '').strip() if isinstance(ligne.get(col_name, ''), str) else str(ligne.get(col_name, ''))
                 item = QTableWidgetItem(valeur)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.tableau.setItem(idx, col_idx + 1, item)
@@ -1585,8 +1673,7 @@ class DialogImportCSV(QDialog):
 
                 # Couleur basée sur le numéro de ligne
                 try:
-                    couleur_idx = int(num_ligne) % len(couleurs) if num_ligne.isdigit() else hash(num_ligne) % len(
-                        couleurs)
+                    couleur_idx = int(num_ligne) % len(couleurs) if num_ligne.isdigit() else hash(num_ligne) % len(couleurs)
                 except:
                     couleur_idx = row % len(couleurs)
 
@@ -1814,8 +1901,7 @@ class MainWindow(QMainWindow):
 
         # Bouton Optimiser
         self.btn_optimiser = QPushButton("🔧 Optimiser")
-        self.btn_optimiser.setStyleSheet(
-            "background-color: #8e44ad; color: white; padding: 5px 15px; font-weight: bold;")
+        self.btn_optimiser.setStyleSheet("background-color: #8e44ad; color: white; padding: 5px 15px; font-weight: bold;")
         self.btn_optimiser.clicked.connect(self.lancer_optimisation)
         self.btn_optimiser.setToolTip("Lancer l'optimisation OR-Tools pour assigner automatiquement les voyages")
         toolbar.addWidget(self.btn_optimiser)
