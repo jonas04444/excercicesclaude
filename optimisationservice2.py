@@ -255,6 +255,7 @@ def afficher_solutions(solutions):
     text_area = tk.Text(root, width=90, height=30)
     text_area.pack(pady=10, padx=10)
 
+
     def afficher_solution(event=None):
         text_area.delete(1.0, tk.END)
         idx = combo.current()
