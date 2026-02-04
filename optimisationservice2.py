@@ -1,4 +1,10 @@
-voyages = [
+from ortools.sat.python import cp_model
+from objet import service_agent, voyage, proposition
+
+# ==================== DONNÉES ====================
+
+voyages_data = [
+    # (ligne, num_voyage, arret_debut, arret_fin, heure_debut, heure_fin)
     # Voyages pré-assignés à S1
     ("63", 1, "JUMA1", "FOMET", "06:00", "06:30"),
     ("63", 2, "FOMET", "JUMA2", "06:45", "07:15"),
@@ -19,21 +25,40 @@ voyages = [
     ("63", 13, "JUMA1", "FOMET", "09:30", "10:00"),
 ]
 
-services = [
-    {"id": "S1", "debut": "05:30", "fin": "12:00", "voyages_assignes": [0,1]},
-    {"id": "S2", "debut": "06:00", "fin": "12:30", "voyages_assignes": [2,3]},
+services_data = [
+    {"id": "S1", "debut": "05:30", "fin": "12:00", "voyages_assignes": [0, 1]},
+    {"id": "S2", "debut": "06:00", "fin": "12:30", "voyages_assignes": [2, 3]},
     {"id": "S3", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
     {"id": "S4", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
     {"id": "S5", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
     {"id": "S6", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
-    #{"id": "S7", "debut": "06:00", "fin": "12:00", "voyages_assignes": []}
 ]
-from ortools.sat.python import cp_model
 
-model = cp_model.CpModel()
+pause_min = 5  # Minutes de pause minimum entre deux voyages
 
-pause_min = 5
 
+# ==================== CLASSE SERVICE POUR LE SOLVER ====================
+
+class ServiceSolver:
+    """Wrapper pour service_agent adapté au solver"""
+
+    def __init__(self, id, debut, fin):
+        self.id = id
+        self.debut = self.time_to_minutes(debut)
+        self.fin = self.time_to_minutes(fin)
+        self.voyages_assignes = []  # Indices des voyages pré-assignés
+
+    def time_to_minutes(self, heure_str):
+        h, m = heure_str.split(':')
+        return int(h) * 60 + int(m)
+
+    def minutes_to_time(self, minutes):
+        h = minutes // 60
+        m = minutes % 60
+        return f"{h:02d}:{m:02d}"
+
+
+# ==================== COLLECTEUR DE SOLUTIONS ====================
 
 class SolutionCollector(cp_model.CpSolverSolutionCallback):
     def __init__(self, x, voyages_objets, services_objets, max_solutions=5):
@@ -49,10 +74,7 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
             self.StopSearch()
             return
 
-        # Structure plus complète pour Tkinter
-        solution = {
-            "services": {}
-        }
+        solution = {"services": {}}
 
         for s in range(len(self.services_objets)):
             serv = self.services_objets[s]
@@ -63,14 +85,15 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
                     voy = self.voyages_objets[v]
                     voyages_du_service.append({
                         "index": v,
-                        "ligne": voy.ligne,
-                        "num": voy.num,
-                        "depart": voy.debut,
-                        "arrivee": voy.fin,
-                        "heure_debut": voy.h_debut,
-                        "heure_fin": voy.h_fin,
-                        "heure_debut_str": voy.minutes_to_time(voy.h_debut),
-                        "heure_fin_str": voy.minutes_to_time(voy.h_fin),
+                        "ligne": voy.num_ligne,  # Adapté pour objet.py
+                        "num": voy.num_voyage,  # Adapté pour objet.py
+                        "depart": voy.arret_debut,  # Adapté pour objet.py
+                        "arrivee": voy.arret_fin,  # Adapté pour objet.py
+                        "heure_debut": voy.hdebut,  # Adapté pour objet.py
+                        "heure_fin": voy.hfin,  # Adapté pour objet.py
+                        "heure_debut_str": voyage.minutes_to_time(voy.hdebut),
+                        "heure_fin_str": voyage.minutes_to_time(voy.hfin),
+                        "js_srv": voy.js_srv,
                         "fixe": v in serv.voyages_assignes
                     })
 
@@ -87,135 +110,128 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
         self.solutions.append(solution)
 
     def get_solutions(self):
-        """Retourne les solutions pour Tkinter"""
         return self.solutions
 
-class Service:
-    def __init__(self, id, debut, fin):
-        self.id = id
-        self.debut = self.time_to_minutes(debut)
-        self.fin = self.time_to_minutes(fin)
-        self.voyages_assignes = []
 
-    def time_to_minutes(self, heure_str):
-        h, m = heure_str.split(':')
-        return int(h) * 60 + int(m)
+# ==================== FONCTIONS UTILITAIRES ====================
 
-    def minutes_to_time(self, minutes):
-        h = minutes // 60
-        m = minutes % 60
-        return f"{h:02d}:{m:02d}"
+def chevauchement(v1, v2, voyages_objets):
+    """Vérifie si deux voyages se chevauchent"""
+    return (voyages_objets[v1].hfin + pause_min > voyages_objets[v2].hdebut and
+            voyages_objets[v2].hfin + pause_min > voyages_objets[v1].hdebut)
 
-class Voyage:
-    def __init__(self, ligne, num, debut, fin, h_debut, h_fin):
-        self.ligne = ligne
-        self.num = num
-        self.debut = debut
-        self.fin = fin
-        self.h_debut = self.time_to_minutes(h_debut)
-        self.h_fin = self.time_to_minutes(h_fin)
 
-    def time_to_minutes(self, heure_str):
-        h, m = heure_str.split(':')
-        return int(h) * 60 + int(m)
+# ==================== CRÉATION DES OBJETS ====================
 
-    def minutes_to_time(self, minutes):
-        h = minutes // 60
-        m = minutes % 60
-        return f"{h:02d}:{m:02d}"
-
-def chevauchement(v1, v2):
-    return voyages_objets[v1].h_fin + pause_min > voyages_objets[v2].h_debut and \
-           voyages_objets[v2].h_fin + pause_min > voyages_objets[v1].h_debut
-
+# Créer les objets voyage depuis objet.py
 voyages_objets = []
+for v_data in voyages_data:
+    ligne, num, arr_deb, arr_fin, h_deb, h_fin = v_data
+    voy = voyage(
+        num_ligne=ligne,
+        num_voyage=num,
+        arret_debut=arr_deb,
+        arret_fin=arr_fin,
+        heure_debut=h_deb,
+        heure_fin=h_fin
+    )
+    voyages_objets.append(voy)
 
-for voyage in voyages:
-    voyages_objets.append(Voyage(*voyage))
-
+# Créer les objets service
 services_objets = []
-for s in services:
-    serv = Service(s["id"], s["debut"], s["fin"])
-    serv.voyages_assignes = s["voyages_assignes"]
+for s_data in services_data:
+    serv = ServiceSolver(s_data["id"], s_data["debut"], s_data["fin"])
+    serv.voyages_assignes = s_data["voyages_assignes"]
     services_objets.append(serv)
 
+# ==================== MODÈLE CP-SAT ====================
+
+model = cp_model.CpModel()
+
+# Variables x[v,s] = 1 si voyage v est assigné au service s
 x = {}
 for v in range(len(voyages_objets)):
     for s in range(len(services_objets)):
         x[v, s] = model.NewBoolVar(f"voyage_{v}_service_{s}")
 
+# Variables de succession y[v1,v2,s] = 1 si v1 précède directement v2 sur le service s
 y = {}
 for v1 in range(len(voyages_objets)):
     for v2 in range(len(voyages_objets)):
         if v1 != v2:
-            if voyages_objets[v1].h_fin + pause_min <= voyages_objets[v2].h_debut:
+            # v1 peut précéder v2 si v1 termine avant que v2 commence (avec pause)
+            if voyages_objets[v1].hfin + pause_min <= voyages_objets[v2].hdebut:
                 for s in range(len(services_objets)):
                     y[v1, v2, s] = model.NewBoolVar(f"succ_{v1}_{v2}_{s}")
 
+# Contrainte 1: Chaque voyage est assigné à exactement un service
 for v in range(len(voyages_objets)):
     model.Add(sum(x[v, s] for s in range(len(services_objets))) == 1)
 
+# Contrainte 2: Voyages pré-assignés restent sur leur service
 for s in range(len(services_objets)):
     for v in services_objets[s].voyages_assignes:
         model.Add(x[v, s] == 1)
 
+# Contrainte 3: Pas de chevauchement sur le même service
 for v1 in range(len(voyages_objets)):
     for v2 in range(v1 + 1, len(voyages_objets)):
-        if chevauchement(v1, v2):
+        if chevauchement(v1, v2, voyages_objets):
             for s in range(len(services_objets)):
                 model.Add(x[v1, s] + x[v2, s] <= 1)
 
+# Contrainte 4: Respect des limites horaires des services
+for v in range(len(voyages_objets)):
+    for s in range(len(services_objets)):
+        voy = voyages_objets[v]
+        serv = services_objets[s]
+        if voy.hdebut < serv.debut or voy.hfin > serv.fin:
+            model.Add(x[v, s] == 0)
+
+# Contrainte 5: Lien entre succession et assignation
 for (v1, v2, s) in y:
     model.Add(x[v1, s] == 1).OnlyEnforceIf(y[v1, v2, s])
     model.Add(x[v2, s] == 1).OnlyEnforceIf(y[v1, v2, s])
 
+# Contrainte 6: Au plus un successeur direct par voyage
 for v1 in range(len(voyages_objets)):
     for s in range(len(services_objets)):
         successeurs = [y[v1, v2, s] for v2 in range(len(voyages_objets)) if (v1, v2, s) in y]
         if successeurs:
             model.Add(sum(successeurs) <= 1).OnlyEnforceIf(x[v1, s])
 
-# 6. Chaque voyage a AU PLUS UN prédécesseur direct sur un service
+# Contrainte 7: Au plus un prédécesseur direct par voyage
 for v2 in range(len(voyages_objets)):
     for s in range(len(services_objets)):
         predecesseurs = [y[v1, v2, s] for v1 in range(len(voyages_objets)) if (v1, v2, s) in y]
         if predecesseurs:
             model.Add(sum(predecesseurs) <= 1).OnlyEnforceIf(x[v2, s])
 
-# 7. Continuité géographique : interdit les successions sans continuité
+# Contrainte 8: Continuité géographique (3 premiers caractères)
 for (v1, v2, s) in y:
-    geo_ok = voyages_objets[v1].fin[:3] == voyages_objets[v2].debut[:3]
+    # Utiliser arret_fin_id() et arret_debut_id() de objet.py
+    geo_ok = voyages_objets[v1].arret_fin_id() == voyages_objets[v2].arret_debut_id()
     if not geo_ok:
         model.Add(y[v1, v2, s] == 0)
 
-# 8. Si deux voyages sont sur le même service et peuvent se suivre,
-#    l'un doit être le successeur de l'autre (ou il y a un voyage entre)
+# Contrainte 9: Si deux voyages sont sur le même service et peuvent se suivre,
+# l'un doit être le successeur de l'autre (ou il y a un voyage entre)
 for v1 in range(len(voyages_objets)):
     for v2 in range(len(voyages_objets)):
-        if v1 != v2 and (v1, v2, 0) in y:  # Si v1 peut précéder v2
+        if v1 != v2 and (v1, v2, 0) in y:
             for s in range(len(services_objets)):
-                # Si v1 et v2 sont sur le même service...
                 both_on_s = model.NewBoolVar(f"both_{v1}_{v2}_{s}")
                 model.Add(x[v1, s] + x[v2, s] == 2).OnlyEnforceIf(both_on_s)
                 model.Add(x[v1, s] + x[v2, s] < 2).OnlyEnforceIf(both_on_s.Not())
 
-                # ...alors soit v1→v2 directement, soit il y a un intermédiaire
                 intermediaires = [y[v1, vi, s] for vi in range(len(voyages_objets))
                                   if (v1, vi, s) in y and vi != v2 and
-                                  voyages_objets[vi].h_fin + pause_min <= voyages_objets[v2].h_debut]
+                                  voyages_objets[vi].hfin + pause_min <= voyages_objets[v2].hdebut]
 
                 if (v1, v2, s) in y:
-                    # v1 est suivi de v2 OU v1 est suivi d'un intermédiaire
                     model.Add(y[v1, v2, s] + sum(intermediaires) >= 1).OnlyEnforceIf(both_on_s)
 
-# Ajoute avant le solver
-"""print("=== Voyages qui se chevauchent ===")
-for v1 in range(len(voyages_objets)):
-    for v2 in range(v1 + 1, len(voyages_objets)):
-        if chevauchement(v1, v2):
-            voy1 = voyages_objets[v1]
-            voy2 = voyages_objets[v2]
-            print(f"  v{v1} ({voy1.h_debut}-{voy1.h_fin}) ↔ v{v2} ({voy2.h_debut}-{voy2.h_fin})")"""
+# ==================== RÉSOLUTION ====================
 
 collector = SolutionCollector(x, voyages_objets, services_objets, max_solutions=10)
 
@@ -230,6 +246,8 @@ elif status == cp_model.INFEASIBLE:
 else:
     print(f"Status: {status}")
 
+# ==================== AFFICHAGE TKINTER ====================
+
 import tkinter as tk
 from tkinter import ttk
 
@@ -237,7 +255,7 @@ from tkinter import ttk
 def afficher_solutions(solutions):
     root = tk.Tk()
     root.title("Solutions d'attribution")
-    root.geometry("800x600")
+    root.geometry("900x700")
 
     # Combobox pour choisir la solution
     frame_top = tk.Frame(root)
@@ -252,9 +270,8 @@ def afficher_solutions(solutions):
     combo.current(0)
 
     # Zone d'affichage
-    text_area = tk.Text(root, width=90, height=30)
+    text_area = tk.Text(root, width=100, height=35, font=("Consolas", 10))
     text_area.pack(pady=10, padx=10)
-
 
     def afficher_solution(event=None):
         text_area.delete(1.0, tk.END)
@@ -262,21 +279,42 @@ def afficher_solutions(solutions):
         solution = solutions[idx]
 
         for service_id, service_data in solution["services"].items():
-            if service_data["voyages"]:
-                text_area.insert(tk.END,
-                                 f"\n=== Service {service_id} ({service_data['debut']} - {service_data['fin']}) ===\n")
+            voyages_list = service_data["voyages"]
+            text_area.insert(tk.END,
+                             f"\n{'=' * 60}\n")
+            text_area.insert(tk.END,
+                             f"=== Service {service_id} ({service_data['debut']} - {service_data['fin']}) ===\n")
+            text_area.insert(tk.END,
+                             f"    {len(voyages_list)} voyage(s)\n")
+            text_area.insert(tk.END,
+                             f"{'=' * 60}\n\n")
 
-                for voyage in service_data["voyages"]:
-                    tag = "[FIXE]" if voyage["fixe"] else "[AJOUTÉ]"
+            if voyages_list:
+                prev_voyage = None
+                for voy in voyages_list:
+                    tag = "🔒 FIXE  " if voy["fixe"] else "✨ AJOUTÉ"
+
+                    # Vérifier continuité géo
+                    geo_warning = ""
+                    if prev_voyage:
+                        if prev_voyage["arrivee"][:3] != voy["depart"][:3]:
+                            geo_warning = " ⚠️ RUPTURE GÉO"
+
                     text_area.insert(tk.END,
-                                     f"  {tag} {voyage['ligne']}-{voyage['num']}: {voyage['depart']} → {voyage['arrivee']} ({voyage['heure_debut_str']} - {voyage['heure_fin_str']})\n")
+                                     f"  {tag} | {voy['ligne']}-{voy['num']:>2} | "
+                                     f"{voy['heure_debut_str']}-{voy['heure_fin_str']} | "
+                                     f"{voy['depart']} → {voy['arrivee']}{geo_warning}\n")
+                    prev_voyage = voy
+            else:
+                text_area.insert(tk.END, "  (aucun voyage)\n")
 
     combo.bind("<<ComboboxSelected>>", afficher_solution)
-    afficher_solution()  # Afficher la première solution
+    afficher_solution()
 
     root.mainloop()
 
 
 # Appel après la résolution
 solutions = collector.get_solutions()
-afficher_solutions(solutions)
+if solutions:
+    afficher_solutions(solutions)

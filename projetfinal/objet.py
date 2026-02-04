@@ -1,5 +1,3 @@
-from ortools.sat.python import cp_model
-
 class hlp:
 
     def __init__(self, arret_depart, arret_arrivee, duree, heure_debut=None):
@@ -151,9 +149,11 @@ class voyage:
         self.distance = None
 
     def arret_debut_id(self):
+        """Retourne les 3 premiers caractères de l'arrêt de début"""
         return self.arret_debut[:3]
 
     def arret_fin_id(self):
+        """Retourne les 3 premiers caractères de l'arrêt de fin"""
         return self.arret_fin[:3]
 
     @staticmethod
