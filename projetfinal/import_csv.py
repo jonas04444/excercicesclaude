@@ -53,8 +53,7 @@ class DialogImportCSV(QDialog):
 
         # Info colonnes attendues
         info_label = QLabel("📋 Colonnes attendues : Ligne, Voy., Début, Fin, De, À, Js srv")
-        info_label.setStyleSheet(
-            "color: #666; font-style: italic; padding: 5px; background-color: #f5f5f5; border-radius: 3px;")
+        info_label.setStyleSheet("color: #666; font-style: italic; padding: 5px; background-color: #f5f5f5; border-radius: 3px;")
         layout.addWidget(info_label)
 
         # Tableau de prévisualisation
@@ -78,8 +77,7 @@ class DialogImportCSV(QDialog):
         btn_actions.addWidget(btn_annuler)
 
         self.btn_importer = QPushButton("📥 Importer la sélection")
-        self.btn_importer.setStyleSheet(
-            "background-color: #27ae60; color: white; padding: 10px 20px; font-weight: bold;")
+        self.btn_importer.setStyleSheet("background-color: #27ae60; color: white; padding: 10px 20px; font-weight: bold;")
         self.btn_importer.clicked.connect(self.importer_selection)
         self.btn_importer.setEnabled(False)
         btn_actions.addWidget(self.btn_importer)

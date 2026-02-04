@@ -313,8 +313,3 @@ def afficher_solutions(solutions):
 
     root.mainloop()
 
-
-# Appel après la résolution
-solutions = collector.get_solutions()
-if solutions:
-    afficher_solutions(solutions)
