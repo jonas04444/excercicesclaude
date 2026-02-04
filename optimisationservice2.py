@@ -1,5 +1,4 @@
 from ortools.sat.python import cp_model
-from objet import service_agent, voyage, proposition
 
 # ==================== DONNÉES ====================
 
