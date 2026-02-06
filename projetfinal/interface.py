@@ -378,30 +378,39 @@ class PanneauGauche(QFrame):
             self.combo_services.addItem(nom, i)
 
     def on_service_change(self):
-        idx = self.combo_services.currentData()
-        if idx is None or idx >= len(self.timeline.services):
-            self.table_service.setRowCount(0)
-            return
+        try:
+            idx = self.combo_services.currentData()
+            if idx is None or idx >= len(self.timeline.services):
+                self.table_service.setRowCount(0)
+                return
 
-        service = self.timeline.services[idx]
-        voyages_list = service.get_voyages()
+            service = self.timeline.services[idx]
+            voyages_list = service.get_voyages()
 
-        self.table_service.setRowCount(len(voyages_list))
+            self.table_service.setRowCount(len(voyages_list))
 
-        for row, voy in enumerate(voyages_list):
-            valeurs = [
-                voy.num_ligne,
-                voy.num_voyage,
-                voyage.minutes_to_time(voy.hdebut),
-                voyage.minutes_to_time(voy.hfin),
-                voy.arret_debut,
-                voy.arret_fin
-            ]
+            for row, voy in enumerate(voyages_list):
+                if voy is None:
+                    continue
 
-            for col, val in enumerate(valeurs):
-                item = QTableWidgetItem(str(val))
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table_service.setItem(row, col, item)
+                valeurs = [
+                    voy.num_ligne,
+                    voy.num_voyage,
+                    voyage.minutes_to_time(voy.hdebut),
+                    voyage.minutes_to_time(voy.hfin),
+                    voy.arret_debut,
+                    voy.arret_fin
+                ]
+
+                for col, val in enumerate(valeurs):
+                    item = QTableWidgetItem(str(val))
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self.table_service.setItem(row, col, item)
+
+        except Exception as e:
+            print(f"❌ Erreur on_service_change: {e}")
+            import traceback
+            traceback.print_exc()
 
     def ajouter_service(self):
         dialog = DialogAjoutService(len(self.timeline.services) + 1, self)
@@ -429,78 +438,100 @@ class PanneauGauche(QFrame):
             self.refresh_table_importes()
 
     def ajouter_voyage_au_service(self):
-        idx_service = self.combo_services.currentData()
-        if idx_service is None or idx_service >= len(self.timeline.services):
-            QMessageBox.warning(self, "Attention", "Sélectionnez un service")
-            return
-
-        selection = self.table_importes.selectedItems()
-        if not selection:
-            QMessageBox.warning(self, "Attention", "Sélectionnez un voyage")
-            return
-
-        row = selection[0].row()
-        if row >= len(self.voyages_importes):
-            return
-
-        voy = self.voyages_importes[row]
-
-        if getattr(voy, 'assigne', False):
-            QMessageBox.warning(self, "Déjà assigné",
-                                f"Ce voyage est déjà assigné à {getattr(voy, 'service_assigne', '')}")
-            return
-
-        service = self.timeline.services[idx_service]
-
-        if service.heure_debut is not None and service.heure_fin is not None:
-            if voy.hdebut < service.heure_debut or voy.hfin > service.heure_fin:
-                QMessageBox.warning(self, "Hors limites",
-                                    f"Le voyage est hors des limites du service")
+        try:
+            idx_service = self.combo_services.currentData()
+            if idx_service is None or idx_service >= len(self.timeline.services):
+                QMessageBox.warning(self, "Attention", "Sélectionnez un service")
                 return
 
-        for v_exist in service.get_voyages():
-            if not (voy.hfin + PAUSE_MIN <= v_exist.hdebut or voy.hdebut >= v_exist.hfin + PAUSE_MIN):
-                QMessageBox.warning(self, "Chevauchement",
-                                    f"Ce voyage chevauche {v_exist.num_ligne}-{v_exist.num_voyage}")
+            selection = self.table_importes.selectedItems()
+            if not selection:
+                QMessageBox.warning(self, "Attention", "Sélectionnez un voyage")
                 return
 
-        service.voyages.append(voy)
+            row = selection[0].row()
+            if row >= len(self.voyages_importes):
+                return
 
-        voy.assigne = True
-        nom_service = f"Service {service.num_service}" if service.num_service else f"Service {idx_service + 1}"
-        voy.service_assigne = nom_service
+            voy = self.voyages_importes[row]
 
-        self.timeline.redessiner()
-        self.refresh_table_importes()
-        self.on_service_change()
+            if voy is None:
+                QMessageBox.warning(self, "Erreur", "Voyage invalide")
+                return
+
+            if getattr(voy, 'assigne', False):
+                QMessageBox.warning(self, "Déjà assigné",
+                                    f"Ce voyage est déjà assigné à {getattr(voy, 'service_assigne', '')}")
+                return
+
+            service = self.timeline.services[idx_service]
+
+            if service.heure_debut is not None and service.heure_fin is not None:
+                if voy.hdebut < service.heure_debut or voy.hfin > service.heure_fin:
+                    QMessageBox.warning(self, "Hors limites",
+                                        f"Le voyage est hors des limites du service")
+                    return
+
+            for v_exist in service.get_voyages():
+                if not (voy.hfin + PAUSE_MIN <= v_exist.hdebut or voy.hdebut >= v_exist.hfin + PAUSE_MIN):
+                    QMessageBox.warning(self, "Chevauchement",
+                                        f"Ce voyage chevauche {v_exist.num_ligne}-{v_exist.num_voyage}")
+                    return
+
+            service.voyages.append(voy)
+
+            voy.assigne = True
+            nom_service = f"Service {service.num_service}" if service.num_service else f"Service {idx_service + 1}"
+            voy.service_assigne = nom_service
+
+            self.timeline.redessiner()
+            self.refresh_table_importes()
+            self.on_service_change()
+
+        except Exception as e:
+            print(f"❌ Erreur ajouter_voyage_au_service: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Erreur", f"Erreur: {str(e)}")
 
     def retirer_voyage_du_service(self):
-        idx_service = self.combo_services.currentData()
-        if idx_service is None or idx_service >= len(self.timeline.services):
-            return
+        try:
+            idx_service = self.combo_services.currentData()
+            if idx_service is None or idx_service >= len(self.timeline.services):
+                return
 
-        selection = self.table_service.selectedItems()
-        if not selection:
-            QMessageBox.warning(self, "Attention", "Sélectionnez un voyage")
-            return
+            selection = self.table_service.selectedItems()
+            if not selection:
+                QMessageBox.warning(self, "Attention", "Sélectionnez un voyage")
+                return
 
-        row = selection[0].row()
-        service = self.timeline.services[idx_service]
-        voyages_list = service.get_voyages()
+            row = selection[0].row()
+            service = self.timeline.services[idx_service]
+            voyages_list = service.get_voyages()
 
-        if row >= len(voyages_list):
-            return
+            if row >= len(voyages_list):
+                return
 
-        voy = voyages_list[row]
+            voy = voyages_list[row]
 
-        service.voyages.remove(voy)
+            if voy is None:
+                QMessageBox.warning(self, "Erreur", "Voyage invalide")
+                return
 
-        voy.assigne = False
-        voy.service_assigne = None
+            service.voyages.remove(voy)
 
-        self.timeline.redessiner()
-        self.refresh_table_importes()
-        self.on_service_change()
+            voy.assigne = False
+            voy.service_assigne = None
+
+            self.timeline.redessiner()
+            self.refresh_table_importes()
+            self.on_service_change()
+
+        except Exception as e:
+            print(f"❌ Erreur retirer_voyage_du_service: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Erreur", f"Erreur: {str(e)}")
 
 
 # ==================== DIALOGUE AJOUT SERVICE ====================
@@ -755,7 +786,7 @@ class DialogSolutionsOptimisation(QDialog):
         print(f"📋 Initialisation dialogue avec {len(solutions)} solution(s)")
 
         self.setWindowTitle("Solutions d'optimisation")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(900, 700)
 
         layout = QVBoxLayout(self)
 
@@ -770,15 +801,25 @@ class DialogSolutionsOptimisation(QDialog):
         select_layout.addWidget(QLabel("Choisir une solution :"))
 
         self.combo_solutions = QComboBox()
-        for i in range(len(solutions)):
-            self.combo_solutions.addItem(f"Solution {i + 1}", i)
+        for i, sol in enumerate(solutions):
+            strategie = sol.get("strategie", "Solution")
+            nb_non_assignes = sol.get("nb_non_assignes", 0)
+            label = f"Solution {i + 1}: {strategie}"
+            if nb_non_assignes > 0:
+                label += f" ⚠️ ({nb_non_assignes} non assignés)"
+            self.combo_solutions.addItem(label, i)
         self.combo_solutions.currentIndexChanged.connect(self.afficher_solution)
         select_layout.addWidget(self.combo_solutions)
         select_layout.addStretch()
 
         layout.addLayout(select_layout)
 
-        # Zone d'affichage SIMPLE (texte au lieu de tableau)
+        # Info stratégie
+        self.label_strategie = QLabel()
+        self.label_strategie.setStyleSheet("background-color: #f0f0f0; padding: 8px; border-radius: 4px;")
+        layout.addWidget(self.label_strategie)
+
+        # Zone d'affichage
         self.text_display = QTextEdit()
         self.text_display.setReadOnly(True)
         self.text_display.setFont(QFont("Consolas", 10))
@@ -815,10 +856,21 @@ class DialogSolutionsOptimisation(QDialog):
 
         solution = self.solutions[idx]
 
+        # Afficher info stratégie
+        strategie = solution.get("strategie", "Stratégie inconnue")
+        nb_non_assignes = solution.get("nb_non_assignes", 0)
+        info = f"📊 Stratégie: {strategie}"
+        if nb_non_assignes > 0:
+            info += f" | ⚠️ {nb_non_assignes} voyage(s) non assigné(s)"
+        self.label_strategie.setText(info)
+
         # Générer le texte
         texte = ""
 
+        total_voyages = 0
         for service_id, voyages_list in solution["services"].items():
+            total_voyages += len(voyages_list)
+
             try:
                 service_original = self.services_originaux[service_id]
 
@@ -827,19 +879,29 @@ class DialogSolutionsOptimisation(QDialog):
                 h_debut = voyage.minutes_to_time(service_original.heure_debut)
                 h_fin = voyage.minutes_to_time(service_original.heure_fin)
 
-                texte += f"\n{'=' * 60}\n"
-                texte += f"=== {service_nom} ({h_debut} - {h_fin}) ===\n"
-                texte += f"    {len(voyages_list)} voyage(s)\n"
-                texte += f"{'=' * 60}\n\n"
+                texte += f"\n{'=' * 70}\n"
+                texte += f"=== {service_nom} ({h_debut} - {h_fin}) - {len(voyages_list)} voyage(s) ===\n"
+                texte += f"{'=' * 70}\n\n"
 
                 # Voyages du service
-                for voy_data in voyages_list:
+                for i, voy_data in enumerate(voyages_list):
                     voy = voy_data["voyage_obj"]
                     statut = "🔒 FIXE  " if voy_data["fixe"] else "✨ AJOUTÉ"
 
-                    texte += f"  {statut} | {voy.num_ligne}-{voy.num_voyage} | "
+                    texte += f"  {i + 1}. {statut} | {voy.num_ligne}-{voy.num_voyage:>2} | "
                     texte += f"{voyage.minutes_to_time(voy.hdebut)}-{voyage.minutes_to_time(voy.hfin)} | "
-                    texte += f"{voy.arret_debut} → {voy.arret_fin}\n"
+                    texte += f"{voy.arret_debut[:15]:15} → {voy.arret_fin[:15]:15}"
+
+                    # Vérifier continuité avec voyage précédent
+                    if i > 0:
+                        voy_prec = voyages_list[i - 1]["voyage_obj"]
+                        try:
+                            if voy_prec.arret_fin_id() != voy.arret_debut_id():
+                                texte += " ⚠️ RUPTURE GÉO"
+                        except:
+                            pass
+
+                    texte += "\n"
 
                 if not voyages_list:
                     texte += "  (aucun voyage)\n"
@@ -849,6 +911,10 @@ class DialogSolutionsOptimisation(QDialog):
                 import traceback
                 traceback.print_exc()
 
+        texte += f"\n{'=' * 70}\n"
+        texte += f"TOTAL: {total_voyages} voyage(s) assignés\n"
+        texte += f"{'=' * 70}\n"
+
         print(f"📝 Texte généré ({len(texte)} caractères)")
         self.text_display.setPlainText(texte)
 
@@ -857,7 +923,6 @@ class DialogSolutionsOptimisation(QDialog):
         self.solution_choisie = self.solutions[idx]
         print(f"✅ Solution {idx} choisie")
         self.accept()
-
 
 # ==================== FENÊTRE PRINCIPALE ====================
 
@@ -983,35 +1048,91 @@ class MainWindow(QMainWindow):
     def appliquer_solution_optimisee(self, solution):
         """Applique une solution d'optimisation à l'interface"""
 
-        # Réinitialiser tous les services
-        for service in self.timeline.services:
-            service.voyages = []
+        print("🔧 Début application solution...")
 
-        # Réinitialiser l'état des voyages
-        for voy in self.panneau_gauche.voyages_importes:
-            voy.assigne = False
-            voy.service_assigne = None
+        try:
+            # Réinitialiser TOUS les services
+            print("   Réinitialisation des services...")
+            for service in self.timeline.services:
+                service.voyages.clear()  # Clear au lieu de = []
 
-        # Appliquer la nouvelle attribution
-        for service_id, voyages_list in solution["services"].items():
-            service = self.timeline.services[service_id]
+            # Réinitialiser l'état de TOUS les voyages
+            print("   Réinitialisation des voyages...")
+            for voy in self.panneau_gauche.voyages_importes:
+                voy.assigne = False
+                voy.service_assigne = None
 
-            for voy_data in voyages_list:
-                voy_original = voy_data["voyage_obj"]
-                service.voyages.append(voy_original)
+            # Appliquer la nouvelle attribution
+            print("   Application de la nouvelle attribution...")
+            voyages_a_assigner = []
 
-                voy_original.assigne = True
-                nom_service = f"Service {service.num_service}" if service.num_service else f"Service {service_id + 1}"
-                voy_original.service_assigne = nom_service
+            for service_id, voyages_list in solution["services"].items():
+                if service_id >= len(self.timeline.services):
+                    print(f"   ⚠️ Service {service_id} n'existe plus, skip")
+                    continue
 
-        # Rafraîchir l'interface
-        self.timeline.redessiner()
-        self.panneau_gauche.refresh_table_importes()
-        self.panneau_gauche.refresh_combo_services()
+                service = self.timeline.services[service_id]
 
-        self.label_info.setText("✅ Solution appliquée avec succès !")
-        QMessageBox.information(self, "Succès", "La solution d'optimisation a été appliquée")
+                for voy_data in voyages_list:
+                    v_idx = voy_data["index"]
 
+                    # Vérifier que l'index est valide
+                    if v_idx >= len(self.panneau_gauche.voyages_importes):
+                        print(f"   ⚠️ Index voyage {v_idx} invalide, skip")
+                        continue
+
+                    # Récupérer le voyage ORIGINAL depuis voyages_importes
+                    voy_original = self.panneau_gauche.voyages_importes[v_idx]
+
+                    # Vérification de sécurité
+                    if voy_original is None:
+                        print(f"   ⚠️ Voyage à l'index {v_idx} est None, skip")
+                        continue
+
+                    # Ajouter au service
+                    service.voyages.append(voy_original)
+
+                    # Marquer comme assigné
+                    voy_original.assigne = True
+                    nom_service = f"Service {service.num_service}" if service.num_service else f"Service {service_id + 1}"
+                    voy_original.service_assigne = nom_service
+
+                    voyages_a_assigner.append((service_id, v_idx))
+
+            print(f"   ✅ {len(voyages_a_assigner)} voyages assignés")
+
+            # Rafraîchir l'interface dans l'ordre correct
+            print("   Rafraîchissement de l'interface...")
+
+            # 1. Timeline en premier
+            self.timeline.redessiner()
+
+            # 2. Table des voyages importés
+            self.panneau_gauche.refresh_table_importes()
+
+            # 3. Combo des services
+            self.panneau_gauche.refresh_combo_services()
+
+            # 4. Si un service est sélectionné, rafraîchir sa table
+            if self.panneau_gauche.combo_services.currentData() is not None:
+                self.panneau_gauche.on_service_change()
+
+            # 5. Effacer les détails du voyage sélectionné
+            self.panneau_details.effacer()
+
+            print("✅ Solution appliquée avec succès")
+
+            self.label_info.setText("✅ Solution appliquée avec succès !")
+            QMessageBox.information(self, "Succès",
+                                    f"La solution d'optimisation a été appliquée\n{len(voyages_a_assigner)} voyage(s) assigné(s)")
+
+        except Exception as e:
+            print(f"❌ Erreur lors de l'application: {e}")
+            import traceback
+            traceback.print_exc()
+
+            QMessageBox.critical(self, "Erreur", f"Erreur lors de l'application de la solution:\n{str(e)}")
+            self.label_info.setText("❌ Erreur lors de l'application")
     def on_voyage_selected(self, voy):
         self.panneau_details.afficher(voy)
         self.label_info.setText(f"Voyage sélectionné: {voy.num_ligne}-{voy.num_voyage}")
