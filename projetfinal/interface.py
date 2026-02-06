@@ -205,6 +205,29 @@ class TimelineView(QGraphicsView):
         for voy in service.get_voyages():
             item = VoyageGraphique(voy, y, self.pixels_par_heure, self)
             self.scene.addItem(item)
+        if hasattr(service, 'pauses'):
+            for hdebut, hfin in service.pauses:
+                h_debut = hdebut / 60
+                h_fin = hfin / 60
+
+                x_debut = MARGE_GAUCHE + (h_debut - HEURE_DEBUT) * self.pixels_par_heure
+                x_fin = MARGE_GAUCHE + (h_fin - HEURE_DEBUT) * self.pixels_par_heure
+
+                # Rectangle de pause (gris hachuré)
+                pause_rect = self.scene.addRect(
+                    x_debut, y + 2, x_fin - x_debut, HAUTEUR_SERVICE - 4,
+                    QPen(QColor('#95a5a6'), 2, Qt.PenStyle.DashLine),
+                    QBrush(QColor('#bdc3c7'))
+                )
+                pause_rect.setZValue(2)  # Au-dessus de la zone horaire
+
+                # Texte "PAUSE" si assez large
+                if x_fin - x_debut > 30:
+                    pause_text = self.scene.addText("⏸️ PAUSE")
+                    pause_text.setDefaultTextColor(QColor('#7f8c8d'))
+                    pause_text.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+                    pause_text.setPos(x_debut + 5, y + 15)
+                    pause_text.setZValue(3)
 
     def on_voyage_clicked(self, item):
         """Quand on clique sur un voyage"""

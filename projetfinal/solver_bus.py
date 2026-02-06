@@ -104,6 +104,9 @@ def generer_solution_gloutonne(voyages_list, services_list, tri_func, nom_strate
             # Vérifier limites horaires
             if voy.hdebut < serv_info['debut'] or voy.hfin > serv_info['fin']:
                 continue
+            service_original = services_list[serv_info['id']][0]
+            if hasattr(service_original, 'pauses') and service_original.est_dans_pause(voy.hdebut, voy.hfin):
+                continue
 
             # Vérifier chevauchements
             compatible = True
