@@ -4,12 +4,13 @@ Utilise les classes de objet.py (voyage, service_agent, hlp, proposition)
 """
 
 import sys
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsTextItem,
     QPushButton, QLabel, QTimeEdit, QDialog, QFormLayout, QLineEdit,
     QComboBox, QDialogButtonBox, QFrame, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QMessageBox
+    QHeaderView, QAbstractItemView, QMessageBox, QTextEdit
 )
 from PyQt6.QtCore import Qt, QTime, pyqtSignal
 from PyQt6.QtGui import QBrush, QPen, QColor, QFont, QPainter
@@ -739,6 +740,125 @@ class PanneauDetails(QFrame):
         self.js_srv_frame.hide()
         self.placeholder.show()
 
+
+# ==================== DIALOGUE SOLUTIONS OPTIMISATION ====================
+
+class DialogSolutionsOptimisation(QDialog):
+    """Dialogue pour afficher et choisir une solution d'optimisation"""
+
+    def __init__(self, solutions, services_originaux, parent=None):
+        super().__init__(parent)
+        self.solutions = solutions
+        self.services_originaux = services_originaux
+        self.solution_choisie = None
+
+        print(f"📋 Initialisation dialogue avec {len(solutions)} solution(s)")
+
+        self.setWindowTitle("Solutions d'optimisation")
+        self.setMinimumSize(800, 600)
+
+        layout = QVBoxLayout(self)
+
+        # Header
+        header = QLabel(f"🎉 {len(solutions)} solution(s) trouvée(s) !")
+        header.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        header.setStyleSheet("background-color: #27ae60; color: white; padding: 10px;")
+        layout.addWidget(header)
+
+        # Sélection de solution
+        select_layout = QHBoxLayout()
+        select_layout.addWidget(QLabel("Choisir une solution :"))
+
+        self.combo_solutions = QComboBox()
+        for i in range(len(solutions)):
+            self.combo_solutions.addItem(f"Solution {i + 1}", i)
+        self.combo_solutions.currentIndexChanged.connect(self.afficher_solution)
+        select_layout.addWidget(self.combo_solutions)
+        select_layout.addStretch()
+
+        layout.addLayout(select_layout)
+
+        # Zone d'affichage SIMPLE (texte au lieu de tableau)
+        self.text_display = QTextEdit()
+        self.text_display.setReadOnly(True)
+        self.text_display.setFont(QFont("Consolas", 10))
+        layout.addWidget(self.text_display)
+
+        # Boutons
+        buttons_layout = QHBoxLayout()
+
+        btn_appliquer = QPushButton("✅ Appliquer cette solution")
+        btn_appliquer.setStyleSheet("background-color: #27ae60; color: white; padding: 10px;")
+        btn_appliquer.clicked.connect(self.appliquer_solution)
+        buttons_layout.addWidget(btn_appliquer)
+
+        btn_annuler = QPushButton("❌ Annuler")
+        btn_annuler.clicked.connect(self.reject)
+        buttons_layout.addWidget(btn_annuler)
+
+        layout.addLayout(buttons_layout)
+
+        print("📋 Dialogue créé, affichage de la première solution...")
+
+        # Afficher la première solution
+        if solutions:
+            self.afficher_solution()
+
+    def afficher_solution(self):
+        print("📊 afficher_solution() appelée")
+        idx = self.combo_solutions.currentData()
+        if idx is None:
+            print("⚠️ Aucun index sélectionné")
+            return
+
+        print(f"📊 Affichage de la solution {idx}")
+
+        solution = self.solutions[idx]
+
+        # Générer le texte
+        texte = ""
+
+        for service_id, voyages_list in solution["services"].items():
+            try:
+                service_original = self.services_originaux[service_id]
+
+                # Header du service
+                service_nom = f"Service {service_original.num_service}" if service_original.num_service else f"Service {service_id + 1}"
+                h_debut = voyage.minutes_to_time(service_original.heure_debut)
+                h_fin = voyage.minutes_to_time(service_original.heure_fin)
+
+                texte += f"\n{'=' * 60}\n"
+                texte += f"=== {service_nom} ({h_debut} - {h_fin}) ===\n"
+                texte += f"    {len(voyages_list)} voyage(s)\n"
+                texte += f"{'=' * 60}\n\n"
+
+                # Voyages du service
+                for voy_data in voyages_list:
+                    voy = voy_data["voyage_obj"]
+                    statut = "🔒 FIXE  " if voy_data["fixe"] else "✨ AJOUTÉ"
+
+                    texte += f"  {statut} | {voy.num_ligne}-{voy.num_voyage} | "
+                    texte += f"{voyage.minutes_to_time(voy.hdebut)}-{voyage.minutes_to_time(voy.hfin)} | "
+                    texte += f"{voy.arret_debut} → {voy.arret_fin}\n"
+
+                if not voyages_list:
+                    texte += "  (aucun voyage)\n"
+
+            except Exception as e:
+                print(f"❌ Erreur affichage service {service_id}: {e}")
+                import traceback
+                traceback.print_exc()
+
+        print(f"📝 Texte généré ({len(texte)} caractères)")
+        self.text_display.setPlainText(texte)
+
+    def appliquer_solution(self):
+        idx = self.combo_solutions.currentData()
+        self.solution_choisie = self.solutions[idx]
+        print(f"✅ Solution {idx} choisie")
+        self.accept()
+
+
 # ==================== FENÊTRE PRINCIPALE ====================
 
 class MainWindow(QMainWindow):
@@ -758,6 +878,12 @@ class MainWindow(QMainWindow):
         self.btn_effacer = QPushButton("🗑️ Tout effacer")
         self.btn_effacer.clicked.connect(self.effacer_tout)
         toolbar.addWidget(self.btn_effacer)
+
+        # ✨ NOUVEAU BOUTON OPTIMISER
+        self.btn_optimiser = QPushButton("🚀 Optimiser l'attribution")
+        self.btn_optimiser.setStyleSheet("background-color: #e67e22; color: white; padding: 8px; font-weight: bold;")
+        self.btn_optimiser.clicked.connect(self.optimiser_services)
+        toolbar.addWidget(self.btn_optimiser)
 
         toolbar.addStretch()
 
@@ -781,6 +907,110 @@ class MainWindow(QMainWindow):
         content.addWidget(self.panneau_details)
 
         main_layout.addLayout(content)
+
+    def optimiser_services(self):
+        """Lance l'optimisation des services"""
+        from solver_bus import optimiser_services
+
+        print("🚀 Début optimisation")
+
+        # Vérifications
+        if not self.panneau_gauche.voyages_importes:
+            QMessageBox.warning(self, "Attention", "Aucun voyage importé")
+            return
+
+        if not self.timeline.services:
+            QMessageBox.warning(self, "Attention", "Aucun service créé")
+            return
+
+        # Préparer les données
+        voyages_list = self.panneau_gauche.voyages_importes
+        print(f"🚌 Nombre de voyages : {len(voyages_list)}")
+
+        services_data = []
+        for service in self.timeline.services:
+            # Trouver les indices des voyages déjà assignés
+            indices_assignes = []
+            for i, voy in enumerate(voyages_list):
+                if voy in service.get_voyages():
+                    indices_assignes.append(i)
+
+            print(f"📋 Service {service.num_service} : {len(indices_assignes)} voyages pré-assignés")
+            services_data.append((service, indices_assignes))
+
+        # Lancer l'optimisation avec indicateur de chargement
+        self.label_info.setText("⏳ Optimisation en cours...")
+        QApplication.processEvents()  # Forcer l'affichage
+
+        try:
+            solutions = optimiser_services(voyages_list, services_data, max_solutions=5)
+
+            print(f"✅ Nombre de solutions trouvées : {len(solutions)}")
+
+            if not solutions:
+                QMessageBox.warning(self, "Aucune solution",
+                                    "Le solver n'a pas trouvé de solution.\n"
+                                    "Vérifiez que les contraintes sont réalisables.")
+                self.label_info.setText("❌ Aucune solution trouvée")
+                return
+
+            # DEBUG: Afficher la première solution
+            print(f"📊 Solution 1 - Services : {len(solutions[0]['services'])}")
+            for service_id, voyages_list_sol in solutions[0]["services"].items():
+                print(f"   Service {service_id} : {len(voyages_list_sol)} voyages")
+
+            # Afficher le dialogue des solutions
+            print("🖥️ Création du dialogue...")
+            dialog = DialogSolutionsOptimisation(solutions, self.timeline.services, self)
+
+            print("🖥️ Affichage du dialogue...")
+            result = dialog.exec()
+            print(f"🖥️ Résultat du dialogue : {result}")
+
+            if result == QDialog.DialogCode.Accepted:
+                print("✅ Solution acceptée, application en cours...")
+                self.appliquer_solution_optimisee(dialog.solution_choisie)
+            else:
+                print("❌ Solution annulée")
+                self.label_info.setText("Optimisation annulée")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur lors de l'optimisation:\n{str(e)}")
+            self.label_info.setText("❌ Erreur d'optimisation")
+            import traceback
+            traceback.print_exc()
+
+    def appliquer_solution_optimisee(self, solution):
+        """Applique une solution d'optimisation à l'interface"""
+
+        # Réinitialiser tous les services
+        for service in self.timeline.services:
+            service.voyages = []
+
+        # Réinitialiser l'état des voyages
+        for voy in self.panneau_gauche.voyages_importes:
+            voy.assigne = False
+            voy.service_assigne = None
+
+        # Appliquer la nouvelle attribution
+        for service_id, voyages_list in solution["services"].items():
+            service = self.timeline.services[service_id]
+
+            for voy_data in voyages_list:
+                voy_original = voy_data["voyage_obj"]
+                service.voyages.append(voy_original)
+
+                voy_original.assigne = True
+                nom_service = f"Service {service.num_service}" if service.num_service else f"Service {service_id + 1}"
+                voy_original.service_assigne = nom_service
+
+        # Rafraîchir l'interface
+        self.timeline.redessiner()
+        self.panneau_gauche.refresh_table_importes()
+        self.panneau_gauche.refresh_combo_services()
+
+        self.label_info.setText("✅ Solution appliquée avec succès !")
+        QMessageBox.information(self, "Succès", "La solution d'optimisation a été appliquée")
 
     def on_voyage_selected(self, voy):
         self.panneau_details.afficher(voy)

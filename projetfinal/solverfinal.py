@@ -3,7 +3,7 @@ from objet import service_agent, voyage, proposition
 
 # ==================== DONNÉES ====================
 
-voyages_data = [
+'''voyages_data = [
     # (ligne, num_voyage, arret_debut, arret_fin, heure_debut, heure_fin)
     # Voyages pré-assignés à S1
     ("63", 1, "JUMA1", "FOMET", "06:00", "06:30"),
@@ -33,7 +33,7 @@ services_data = [
     {"id": "S5", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
     {"id": "S6", "debut": "06:00", "fin": "12:00", "voyages_assignes": []},
 ]
-
+'''
 pause_min = 5  # Minutes de pause minimum entre deux voyages
 
 
