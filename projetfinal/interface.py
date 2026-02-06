@@ -304,6 +304,29 @@ class PanneauGauche(QFrame):
         self.table_service.setAlternatingRowColors(True)
         layout.addWidget(self.table_service)
 
+        self.table_pauses = QTableWidget()
+        self.table_pauses.setColumnCount(3)
+        self.table_pauses.setHorizontalHeaderLabels(['Début', 'Fin', 'Durée'])
+        self.table_pauses.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_pauses.setMaximumHeight(100)
+        self.table_pauses.setAlternatingRowColors(True)
+        layout.addWidget(self.table_pauses)
+
+        # Boutons pauses
+        btn_pause_row = QHBoxLayout()
+
+        btn_add_pause = QPushButton("⏸️ Ajouter une pause")
+        btn_add_pause.setStyleSheet("background-color: #f39c12; color: white;")
+        btn_add_pause.clicked.connect(self.ajouter_pause)
+        btn_pause_row.addWidget(btn_add_pause)
+
+        btn_del_pause = QPushButton("❌ Retirer la pause")
+        btn_del_pause.setStyleSheet("background-color: #e74c3c; color: white;")
+        btn_del_pause.clicked.connect(self.retirer_pause)
+        btn_pause_row.addWidget(btn_del_pause)
+
+        layout.addLayout(btn_pause_row)
+
         btn_assign_row = QHBoxLayout()
 
         btn_ajouter = QPushButton("⬇️ Ajouter au service")
@@ -318,6 +341,82 @@ class PanneauGauche(QFrame):
 
         layout.addLayout(btn_assign_row)
         layout.addStretch()
+
+    def ajouter_pause(self):
+        """Ajoute une pause au service sélectionné"""
+        idx_service = self.combo_services.currentData()
+        if idx_service is None or idx_service >= len(self.timeline.services):
+            QMessageBox.warning(self, "Attention", "Sélectionnez un service")
+            return
+
+        dialog = DialogAjoutPause(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            hdebut, hfin = dialog.get_pause()
+
+            service = self.timeline.services[idx_service]
+
+            # Vérifier chevauchement avec voyages existants
+            for voy in service.get_voyages():
+                if not (hfin <= voy.hdebut or hdebut >= voy.hfin):
+                    QMessageBox.warning(self, "Chevauchement",
+                                        f"La pause chevauche le voyage {voy.num_ligne}-{voy.num_voyage}")
+                    return
+
+            # Ajouter la pause
+            service.ajouter_pause(hdebut, hfin)
+
+            # Rafraîchir
+            self.timeline.redessiner()
+            self.refresh_pauses()
+
+    def retirer_pause(self):
+        """Retire une pause du service sélectionné"""
+        idx_service = self.combo_services.currentData()
+        if idx_service is None or idx_service >= len(self.timeline.services):
+            return
+
+        selection = self.table_pauses.selectedItems()
+        if not selection:
+            QMessageBox.warning(self, "Attention", "Sélectionnez une pause")
+            return
+
+        row = selection[0].row()
+        service = self.timeline.services[idx_service]
+
+        if row >= len(service.pauses):
+            return
+
+        service.retirer_pause(row)
+
+        # Rafraîchir
+        self.timeline.redessiner()
+        self.refresh_pauses()
+
+    def refresh_pauses(self):
+        """Rafraîchit le tableau des pauses"""
+        idx = self.combo_services.currentData()
+        if idx is None or idx >= len(self.timeline.services):
+            self.table_pauses.setRowCount(0)
+            return
+
+        service = self.timeline.services[idx]
+        self.table_pauses.setRowCount(len(service.pauses))
+
+        for row, (hdebut, hfin) in enumerate(service.pauses):
+            duree = hfin - hdebut
+            duree_h = duree // 60
+            duree_m = duree % 60
+
+            items = [
+                voyage.minutes_to_time(hdebut),
+                voyage.minutes_to_time(hfin),
+                f"{duree_h}h{duree_m:02d}"
+            ]
+
+            for col, text in enumerate(items):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table_pauses.setItem(row, col, item)
 
     def importer_csv(self):
         dialog = DialogImportCSV(self)
@@ -382,6 +481,7 @@ class PanneauGauche(QFrame):
             idx = self.combo_services.currentData()
             if idx is None or idx >= len(self.timeline.services):
                 self.table_service.setRowCount(0)
+                self.table_pauses.setRowCount(0)  # ✨ NOUVEAU
                 return
 
             service = self.timeline.services[idx]
@@ -407,6 +507,7 @@ class PanneauGauche(QFrame):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     self.table_service.setItem(row, col, item)
 
+            self.refresh_pauses()
         except Exception as e:
             print(f"❌ Erreur on_service_change: {e}")
             import traceback
@@ -598,6 +699,66 @@ class DialogAjoutService(QDialog):
 
         return service
 
+
+class DialogAjoutPause(QDialog):
+    """Dialogue pour ajouter une pause dans un service"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ajouter une pause")
+        self.setMinimumWidth(300)
+
+        layout = QFormLayout(self)
+
+        self.time_debut = QTimeEdit()
+        self.time_debut.setTime(QTime(12, 0))
+        self.time_debut.setDisplayFormat("HH:mm")
+        layout.addRow("Début de la pause:", self.time_debut)
+
+        self.time_fin = QTimeEdit()
+        self.time_fin.setTime(QTime(13, 0))
+        self.time_fin.setDisplayFormat("HH:mm")
+        layout.addRow("Fin de la pause:", self.time_fin)
+
+        self.label_duree = QLabel()
+        layout.addRow("Durée:", self.label_duree)
+
+        # Mise à jour automatique de la durée
+        self.time_debut.timeChanged.connect(self.update_duree)
+        self.time_fin.timeChanged.connect(self.update_duree)
+        self.update_duree()
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def update_duree(self):
+        t_debut = self.time_debut.time()
+        t_fin = self.time_fin.time()
+
+        minutes_debut = t_debut.hour() * 60 + t_debut.minute()
+        minutes_fin = t_fin.hour() * 60 + t_fin.minute()
+
+        duree = minutes_fin - minutes_debut
+        if duree < 0:
+            duree += 24 * 60
+
+        heures = duree // 60
+        minutes = duree % 60
+        self.label_duree.setText(f"{heures}h{minutes:02d}")
+
+    def get_pause(self):
+        """Retourne (hdebut_minutes, hfin_minutes)"""
+        t_debut = self.time_debut.time()
+        t_fin = self.time_fin.time()
+
+        return (
+            t_debut.hour() * 60 + t_debut.minute(),
+            t_fin.hour() * 60 + t_fin.minute()
+        )
 
 # ==================== PANNEAU DÉTAILS ====================
 

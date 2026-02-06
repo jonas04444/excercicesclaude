@@ -34,6 +34,26 @@ class service_agent:
         self.heure_fin = None
         self.heure_debut_coupure = None
         self.heure_fin_coupure = None
+        self.pauses = []
+
+    def ajouter_pause(self, hdebut_minutes, hfin_minutes):
+        """Ajoute une pause au service"""
+        self.pauses.append((hdebut_minutes, hfin_minutes))
+        # Trier les pauses par heure de début
+        self.pauses.sort(key=lambda p: p[0])
+
+    def retirer_pause(self, index):
+        """Retire une pause"""
+        if 0 <= index < len(self.pauses):
+            del self.pauses[index]
+
+    def est_dans_pause(self, hdebut, hfin):
+        """Vérifie si un créneau chevauche une pause"""
+        for pause_debut, pause_fin in self.pauses:
+            # Vérifier chevauchement
+            if not (hfin <= pause_debut or hdebut >= pause_fin):
+                return True
+        return False
 
     def ajouter_voyage(self, voyage):
         valide, erreur = self.voyage_dans_limites(voyage)
