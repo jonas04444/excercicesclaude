@@ -109,12 +109,24 @@ class VoyageGraphique(QGraphicsRectItem):
             )
 
     def hoverEnterEvent(self, event):
-        couleur = QColor(getattr(self.voyage_obj, 'couleur', '#3498db'))
+        from objet import hlp  # ✨ Importer hlp
+
+        if isinstance(self.voyage_obj, hlp):
+            couleur = QColor('#95a5a6')
+        else:
+            couleur = QColor(getattr(self.voyage_obj, 'couleur', '#3498db'))
+
         self.setBrush(QBrush(couleur.lighter(120)))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        couleur = QColor(getattr(self.voyage_obj, 'couleur', '#3498db'))
+        from objet import hlp  # ✨ Importer hlp
+
+        if isinstance(self.voyage_obj, hlp):
+            couleur = QColor('#95a5a6')
+        else:
+            couleur = QColor(getattr(self.voyage_obj, 'couleur', '#3498db'))
+
         self.setBrush(QBrush(couleur))
         super().hoverLeaveEvent(event)
 
@@ -1022,8 +1034,9 @@ class DialogAjoutHLP(QDialog):
             'hfin': t_fin.hour() * 60 + t_fin.minute()
         }
 
+
 class DialogProposerHLP(QDialog):
-    """Dialogue pour proposer la création automatique de HLP"""
+    """Dialogue pour proposer la création automatique de HLP avec durée personnalisable"""
 
     def __init__(self, ruptures, parent=None):
         super().__init__(parent)
@@ -1031,7 +1044,7 @@ class DialogProposerHLP(QDialog):
         self.hlp_a_creer = []
 
         self.setWindowTitle("Ruptures géographiques détectées")
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(900, 500)
 
         layout = QVBoxLayout(self)
 
@@ -1043,17 +1056,18 @@ class DialogProposerHLP(QDialog):
 
         info = QLabel(
             "Les voyages suivants ne se suivent pas géographiquement.\n"
-            "Des HLP (déplacements à vide) peuvent être créés pour assurer la continuité."
+            "Des HLP (déplacements à vide) peuvent être créés pour assurer la continuité.\n"
+            "⏱️ Vous pouvez modifier la durée de chaque HLP."
         )
         info.setWordWrap(True)
         info.setStyleSheet("padding: 10px; background-color: #fff3cd; border-radius: 5px;")
         layout.addWidget(info)
 
-        # Tableau des ruptures
+        # Tableau des ruptures (avec colonne durée)
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(8)  # ✨ 8 colonnes au lieu de 6
         self.table.setHorizontalHeaderLabels([
-            'Service', 'Voyage 1', 'Arrivée', 'Voyage 2', 'Départ', 'Créer HLP'
+            'Service', 'Voyage 1', 'Arrivée', 'Voyage 2', 'Départ', 'Temps dispo', 'Durée HLP', 'Créer'
         ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setAlternatingRowColors(True)
@@ -1072,6 +1086,11 @@ class DialogProposerHLP(QDialog):
         btn_tout_deselectionner.clicked.connect(self.tout_deselectionner)
         buttons_layout.addWidget(btn_tout_deselectionner)
 
+        btn_duree_max = QPushButton("⏱️ Utiliser temps disponible")
+        btn_duree_max.setToolTip("Mettre la durée du HLP = temps disponible entre les voyages")
+        btn_duree_max.clicked.connect(self.utiliser_temps_dispo)
+        buttons_layout.addWidget(btn_duree_max)
+
         layout.addLayout(buttons_layout)
 
         # Boutons finaux
@@ -1089,8 +1108,11 @@ class DialogProposerHLP(QDialog):
         layout.addLayout(buttons_final)
 
     def _remplir_table(self):
+        from objet import voyage
+
         self.table.setRowCount(len(self.ruptures))
         self.checkboxes = []
+        self.spinboxes_duree = []  # ✨ Liste des spinbox pour les durées
 
         for row, rupture in enumerate(self.ruptures):
             # Service
@@ -1120,12 +1142,29 @@ class DialogProposerHLP(QDialog):
             item_dep.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 4, item_dep)
 
+            # ✨ Temps disponible
+            temps_dispo = voy2.hdebut - voy1.hfin
+            item_temps = QTableWidgetItem(f"{temps_dispo} min")
+            item_temps.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 5, item_temps)
+
+            # ✨ Durée HLP (spinbox éditable)
+            from PyQt6.QtWidgets import QSpinBox
+            spinbox = QSpinBox()
+            spinbox.setMinimum(1)
+            spinbox.setMaximum(temps_dispo)  # Max = temps dispo
+            spinbox.setValue(min(5, temps_dispo))  # Défaut: 30 min ou temps dispo
+            spinbox.setSuffix(" min")
+            spinbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setCellWidget(row, 6, spinbox)
+            self.spinboxes_duree.append(spinbox)
+
             # Checkbox
             checkbox = QTableWidgetItem()
             checkbox.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             checkbox.setCheckState(Qt.CheckState.Checked)  # Coché par défaut
             checkbox.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(row, 5, checkbox)
+            self.table.setItem(row, 7, checkbox)
             self.checkboxes.append(checkbox)
 
     def tout_selectionner(self):
@@ -1136,13 +1175,29 @@ class DialogProposerHLP(QDialog):
         for checkbox in self.checkboxes:
             checkbox.setCheckState(Qt.CheckState.Unchecked)
 
+    def utiliser_temps_dispo(self):
+        """Met la durée du HLP = temps disponible pour tous les HLP"""
+        for i, spinbox in enumerate(self.spinboxes_duree):
+            voy1 = self.ruptures[i]['voyage1']
+            voy2 = self.ruptures[i]['voyage2']
+            temps_dispo = voy2.hdebut - voy1.hfin
+            spinbox.setValue(temps_dispo)
+
     def creer_hlp(self):
-        """Collecte les HLP à créer"""
+        """Collecte les HLP à créer avec leurs durées personnalisées"""
         self.hlp_a_creer = []
 
         for i, checkbox in enumerate(self.checkboxes):
             if checkbox.checkState() == Qt.CheckState.Checked:
-                rupture = self.ruptures[i]
+                rupture = self.ruptures[i].copy()
+
+                # ✨ Ajouter la durée personnalisée
+                duree_personnalisee = self.spinboxes_duree[i].value()
+                rupture['duree_hlp'] = duree_personnalisee
+
+                # ✨ DEBUG
+                print(f"   🔍 Spinbox {i}: valeur = {duree_personnalisee} min")
+
                 self.hlp_a_creer.append(rupture)
 
         if self.hlp_a_creer:
@@ -1257,55 +1312,96 @@ class PanneauDetails(QFrame):
         return frame
 
     def afficher(self, voy):
-        """Affiche les détails d'un objet voyage"""
+        """Affiche les détails d'un objet voyage ou HLP"""
+        from objet import hlp, voyage  # ✨ Importer hlp
+
         self.placeholder.hide()
 
-        # Header avec couleur du voyage
-        couleur = getattr(voy, 'couleur', '#3498db')
-        self.header.setStyleSheet(f"""
-            QLabel {{
-                background-color: {couleur};
-                color: white;
-                padding: 10px;
-                border-radius: 5px;
-            }}
-        """)
+        # ✨ NOUVEAU : Gérer différemment les HLP
+        if isinstance(voy, hlp):
+            # === AFFICHAGE POUR HLP ===
 
-        # Numéro de ligne
-        self.ligne_frame.value_label.setText(str(voy.num_ligne))
-        self.ligne_frame.show()
+            # Header gris pour HLP
+            self.header.setStyleSheet("""
+                QLabel {
+                    background-color: #95a5a6;
+                    color: white;
+                    padding: 10px;
+                    border-radius: 5px;
+                }
+            """)
+            self.header.setText("🚗 Détails du HLP")
 
-        # Numéro de voyage
-        self.voyage_num_frame.value_label.setText(str(voy.num_voyage))
-        self.voyage_num_frame.show()
-
-        # Horaires
-        h_debut = voyage.minutes_to_time(voy.hdebut)
-        h_fin = voyage.minutes_to_time(voy.hfin)
-        duree = voy.hfin - voy.hdebut
-        duree_h = duree // 60
-        duree_m = duree % 60
-        if duree_h > 0:
-            duree_str = f"{duree_h}h{duree_m:02d}" if duree_m else f"{duree_h}h"
-        else:
-            duree_str = f"{duree_m} min"
-        self.horaires_frame.value_label.setText(f"{h_debut} → {h_fin}\nDurée: {duree_str}")
-        self.horaires_frame.show()
-
-        # Arrêt de départ
-        self.depart_frame.value_label.setText(voy.arret_debut or "N/A")
-        self.depart_frame.show()
-
-        # Arrêt d'arrivée
-        self.arrivee_frame.value_label.setText(voy.arret_fin or "N/A")
-        self.arrivee_frame.show()
-
-        # Jours de service
-        if voy.js_srv:
-            self.js_srv_frame.value_label.setText(voy.js_srv)
-            self.js_srv_frame.show()
-        else:
+            # Masquer les champs non pertinents
+            self.ligne_frame.hide()
+            self.voyage_num_frame.hide()
             self.js_srv_frame.hide()
+
+            # Horaires
+            h_debut = voyage.minutes_to_time(voy.heure_debut)
+            h_fin = voyage.minutes_to_time(voy.heure_fin)
+            duree_str = f"{voy.duree} min"
+            self.horaires_frame.value_label.setText(f"{h_debut} → {h_fin}\nDurée: {duree_str}")
+            self.horaires_frame.show()
+
+            # Arrêt de départ
+            self.depart_frame.value_label.setText(voy.arret_depart or "N/A")
+            self.depart_frame.show()
+
+            # Arrêt d'arrivée
+            self.arrivee_frame.value_label.setText(voy.arret_arrivee or "N/A")
+            self.arrivee_frame.show()
+
+        else:
+            # === AFFICHAGE NORMAL POUR VOYAGE ===
+
+            # Header avec couleur du voyage
+            couleur = getattr(voy, 'couleur', '#3498db')
+            self.header.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {couleur};
+                    color: white;
+                    padding: 10px;
+                    border-radius: 5px;
+                }}
+            """)
+            self.header.setText("📋 Détails du voyage")
+
+            # Numéro de ligne
+            self.ligne_frame.value_label.setText(str(voy.num_ligne))
+            self.ligne_frame.show()
+
+            # Numéro de voyage
+            self.voyage_num_frame.value_label.setText(str(voy.num_voyage))
+            self.voyage_num_frame.show()
+
+            # Horaires
+            h_debut = voyage.minutes_to_time(voy.hdebut)
+            h_fin = voyage.minutes_to_time(voy.hfin)
+            duree = voy.hfin - voy.hdebut
+            duree_h = duree // 60
+            duree_m = duree % 60
+            if duree_h > 0:
+                duree_str = f"{duree_h}h{duree_m:02d}" if duree_m else f"{duree_h}h"
+            else:
+                duree_str = f"{duree_m} min"
+            self.horaires_frame.value_label.setText(f"{h_debut} → {h_fin}\nDurée: {duree_str}")
+            self.horaires_frame.show()
+
+            # Arrêt de départ
+            self.depart_frame.value_label.setText(voy.arret_debut or "N/A")
+            self.depart_frame.show()
+
+            # Arrêt d'arrivée
+            self.arrivee_frame.value_label.setText(voy.arret_fin or "N/A")
+            self.arrivee_frame.show()
+
+            # Jours de service
+            if hasattr(voy, 'js_srv') and voy.js_srv:
+                self.js_srv_frame.value_label.setText(voy.js_srv)
+                self.js_srv_frame.show()
+            else:
+                self.js_srv_frame.hide()
 
     def effacer(self):
         """Efface les détails et affiche le placeholder"""
@@ -1735,41 +1831,61 @@ class MainWindow(QMainWindow):
             voy1 = rupture['voyage1']
             voy2 = rupture['voyage2']
 
-            # Calculer heure de début et durée du HLP
-            hdebut_hlp = voy1.hfin
-            hfin_hlp = voy2.hdebut
-            duree_hlp = hfin_hlp - hdebut_hlp  # ✅ Calculer la durée
+            # ✨ Utiliser la durée personnalisée
+            duree_hlp = rupture.get('duree_hlp', voy2.hdebut - voy1.hfin)
 
-            # ✅ Créer le HLP avec les bons arguments
+            # ✨ DEBUG
+            print(f"   🔍 DEBUG creer_hlp_auto:")
+            print(f"      - duree_hlp récupérée = {duree_hlp} min")
+            print(f"      - temps disponible = {voy2.hdebut - voy1.hfin} min")
+
+            # Heure de début du HLP
+            hdebut_hlp = voy1.hfin
+
+            # ✅ Créer le HLP
             hlp_obj = hlp(
                 arret_depart=voy1.arret_fin,
                 arret_arrivee=voy2.arret_debut,
-                duree=duree_hlp,  # ✅ Passer la durée
-                heure_debut=hdebut_hlp  # ✅ Passer heure_debut
+                duree=duree_hlp,
+                heure_debut=hdebut_hlp
             )
 
-            # Attributs pour compatibilité avec l'affichage
-            hlp_obj.hdebut = hdebut_hlp  # Pour la timeline
-            hlp_obj.hfin = hfin_hlp  # Pour la timeline
-            hlp_obj.couleur = '#95a5a6'  # Gris pour HLP
+            # ✨ DEBUG
+            print(f"      - HLP créé avec duree={hlp_obj.duree}")
+            print(f"      - heure_debut={hlp_obj.heure_debut}, heure_fin (propriété)={hlp_obj.heure_fin}")
 
-            # Ajouter au service à la bonne position
+            # Attributs pour compatibilité
+            hlp_obj.hdebut = hdebut_hlp
+            hlp_obj.hfin = hdebut_hlp + duree_hlp
+
+            # ✨ DEBUG
+            print(f"      - hdebut={hlp_obj.hdebut}, hfin (attribut)={hlp_obj.hfin}")
+
+            hlp_obj.couleur = '#95a5a6'
+
+            # Ajouter au service
             voyages_list = service.get_voyages()
 
-            # Trouver la position d'insertion
             insert_pos = len(voyages_list)
             for i, v in enumerate(voyages_list):
-                if v.hdebut > hfin_hlp:
+                if v.hdebut > hlp_obj.hfin:
                     insert_pos = i
                     break
 
             service.voyages.insert(insert_pos, hlp_obj)
 
-            print(f"   ✅ HLP créé: {voy1.arret_fin} → {voy2.arret_debut} (durée: {duree_hlp} min)")
+            print(f"   ✅ HLP créé: {voy1.arret_fin} → {voy2.arret_debut} (durée encodée: {duree_hlp} min)")
 
     def on_voyage_selected(self, voy):
+        from objet import hlp  # ✨ Importer hlp
+
         self.panneau_details.afficher(voy)
-        self.label_info.setText(f"Voyage sélectionné: {voy.num_ligne}-{voy.num_voyage}")
+
+        # ✨ Vérifier si c'est un HLP ou un voyage
+        if isinstance(voy, hlp):
+            self.label_info.setText(f"HLP sélectionné: {voy.arret_depart} → {voy.arret_arrivee}")
+        else:
+            self.label_info.setText(f"Voyage sélectionné: {voy.num_ligne}-{voy.num_voyage}")
 
     def effacer_tout(self):
         reply = QMessageBox.question(
