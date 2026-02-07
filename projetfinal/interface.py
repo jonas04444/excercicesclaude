@@ -36,12 +36,21 @@ class VoyageGraphique(QGraphicsRectItem):
     """Rectangle représentant un voyage sur la timeline"""
 
     def __init__(self, voyage_obj, y_pos, pixels_par_heure, parent_view):
+        from objet import hlp  # ✅ Importer hlp
+
         self.voyage_obj = voyage_obj
         self.parent_view = parent_view
 
-        # Position et taille (hdebut et hfin sont en MINUTES)
-        heure_debut = voyage_obj.hdebut / 60
-        heure_fin = voyage_obj.hfin / 60
+        # ✅ MODIFIÉ : Gérer les attributs différents de hlp
+        if isinstance(voyage_obj, hlp):
+            # Pour HLP : utiliser heure_debut au lieu de hdebut
+            heure_debut = getattr(voyage_obj, 'hdebut', voyage_obj.heure_debut) / 60
+            heure_fin = getattr(voyage_obj, 'hfin', voyage_obj.heure_fin) / 60
+        else:
+            # Pour voyage normal
+            heure_debut = voyage_obj.hdebut / 60
+            heure_fin = voyage_obj.hfin / 60
+
         duree_heures = heure_fin - heure_debut
 
         x = MARGE_GAUCHE + (heure_debut - HEURE_DEBUT) * pixels_par_heure
@@ -50,13 +59,18 @@ class VoyageGraphique(QGraphicsRectItem):
 
         super().__init__(x, y_pos + 5, largeur, hauteur)
 
-        # Couleur
-        couleur = QColor(getattr(voyage_obj, 'couleur', '#3498db'))
+        # ✅ Couleur différente pour les HLP
+        if isinstance(voyage_obj, hlp):
+            couleur = QColor('#95a5a6')  # Gris pour les HLP
+            nom = f"🚗 HLP"
+        else:
+            couleur = QColor(getattr(voyage_obj, 'couleur', '#3498db'))
+            nom = f"{voyage_obj.num_ligne}-{voyage_obj.num_voyage}"
+
         self.setBrush(QBrush(couleur))
         self.setPen(QPen(couleur.darker(120), 2))
 
-        # Texte du voyage
-        nom = f"{voyage_obj.num_ligne}-{voyage_obj.num_voyage}"
+        # Texte
         self.text_item = QGraphicsTextItem(nom, self)
         self.text_item.setDefaultTextColor(Qt.GlobalColor.white)
         self.text_item.setFont(QFont("Arial", 8, QFont.Weight.Bold))
@@ -72,14 +86,27 @@ class VoyageGraphique(QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # Tooltip
-        self.setToolTip(
-            f"{nom}\n"
-            f"Ligne: {voyage_obj.num_ligne}\n"
-            f"De: {voyage_obj.arret_debut}\n"
-            f"À: {voyage_obj.arret_fin}\n"
-            f"Heure: {voyage.minutes_to_time(voyage_obj.hdebut)} - {voyage.minutes_to_time(voyage_obj.hfin)}"
-        )
+        # ✅ Tooltip pour HLP
+        if isinstance(voyage_obj, hlp):
+            from objet import voyage
+            h_debut = voyage.minutes_to_time(voyage_obj.heure_debut)
+            h_fin = voyage.minutes_to_time(voyage_obj.heure_fin)
+            self.setToolTip(
+                f"🚗 HLP (Haut-Le-Pied)\n"
+                f"De: {voyage_obj.arret_depart}\n"
+                f"À: {voyage_obj.arret_arrivee}\n"
+                f"Heure: {h_debut} - {h_fin}\n"
+                f"Durée: {voyage_obj.duree} min"
+            )
+        else:
+            from objet import voyage
+            self.setToolTip(
+                f"{nom}\n"
+                f"Ligne: {voyage_obj.num_ligne}\n"
+                f"De: {voyage_obj.arret_debut}\n"
+                f"À: {voyage_obj.arret_fin}\n"
+                f"Heure: {voyage.minutes_to_time(voyage_obj.hdebut)} - {voyage.minutes_to_time(voyage_obj.hfin)}"
+            )
 
     def hoverEnterEvent(self, event):
         couleur = QColor(getattr(self.voyage_obj, 'couleur', '#3498db'))
@@ -350,6 +377,20 @@ class PanneauGauche(QFrame):
 
         layout.addLayout(btn_pause_row)
 
+        btn_hlp_row = QHBoxLayout()
+
+        btn_add_hlp = QPushButton("🚗 Ajouter un HLP")
+        btn_add_hlp.setStyleSheet("background-color: #95a5a6; color: white;")
+        btn_add_hlp.clicked.connect(self.ajouter_hlp)
+        btn_hlp_row.addWidget(btn_add_hlp)
+
+        btn_del_hlp = QPushButton("❌ Retirer le HLP")
+        btn_del_hlp.setStyleSheet("background-color: #e74c3c; color: white;")
+        btn_del_hlp.clicked.connect(self.retirer_hlp)
+        btn_hlp_row.addWidget(btn_del_hlp)
+
+        layout.addLayout(btn_hlp_row)
+
         btn_assign_row = QHBoxLayout()
 
         btn_ajouter = QPushButton("⬇️ Ajouter au service")
@@ -364,6 +405,107 @@ class PanneauGauche(QFrame):
 
         layout.addLayout(btn_assign_row)
         layout.addStretch()
+
+    def ajouter_hlp(self):
+        """Ajoute un HLP au service sélectionné"""
+        from objet import hlp, voyage
+
+        idx_service = self.combo_services.currentData()
+        if idx_service is None or idx_service >= len(self.timeline.services):
+            QMessageBox.warning(self, "Attention", "Sélectionnez un service")
+            return
+
+        dialog = DialogAjoutHLP(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.get_hlp_data()
+
+            # Validation
+            if not data['arret_depart'] or not data['arret_arrivee']:
+                QMessageBox.warning(self, "Attention", "Veuillez remplir les arrêts")
+                return
+
+            if data['hfin'] <= data['hdebut']:
+                QMessageBox.warning(self, "Attention", "L'heure de fin doit être après l'heure de début")
+                return
+
+            service = self.timeline.services[idx_service]
+
+            # Vérifier chevauchement
+            for voy in service.get_voyages():
+                if not (data['hfin'] <= voy.hdebut or data['hdebut'] >= voy.hfin):
+                    nom = f"{voy.num_ligne}-{voy.num_voyage}" if hasattr(voy, 'num_ligne') else "HLP"
+                    QMessageBox.warning(self, "Chevauchement", f"Le HLP chevauche {nom}")
+                    return
+
+            # Vérifier les pauses
+            if service.est_dans_pause(data['hdebut'], data['hfin']):
+                QMessageBox.warning(self, "Attention", "Le HLP chevauche une pause")
+                return
+
+            # ✅ Calculer la durée
+            duree = data['hfin'] - data['hdebut']
+
+            # ✅ Créer le HLP avec les bons arguments
+            hlp_obj = hlp(
+                arret_depart=data['arret_depart'],
+                arret_arrivee=data['arret_arrivee'],
+                duree=duree,
+                heure_debut=data['hdebut']
+            )
+
+            # Attributs pour compatibilité
+            hlp_obj.hdebut = data['hdebut']
+            hlp_obj.hfin = data['hfin']
+            hlp_obj.couleur = '#95a5a6'
+
+            # Ajouter au service
+            insert_pos = len(service.voyages)
+            for i, v in enumerate(service.voyages):
+                if v.hdebut > data['hdebut']:
+                    insert_pos = i
+                    break
+
+            service.voyages.insert(insert_pos, hlp_obj)
+
+            # Rafraîchir
+            self.timeline.redessiner()
+            self.on_service_change()
+
+            QMessageBox.information(self, "Succès", f"HLP ajouté avec succès ({duree} minutes)")
+
+    def retirer_hlp(self):
+        """Retire un HLP du service sélectionné"""
+        from objet import hlp
+
+        idx_service = self.combo_services.currentData()
+        if idx_service is None or idx_service >= len(self.timeline.services):
+            return
+
+        selection = self.table_service.selectedItems()
+        if not selection:
+            QMessageBox.warning(self, "Attention", "Sélectionnez un élément")
+            return
+
+        row = selection[0].row()
+        service = self.timeline.services[idx_service]
+        voyages_list = service.get_voyages()
+
+        if row >= len(voyages_list):
+            return
+
+        element = voyages_list[row]
+
+        # Vérifier que c'est un HLP
+        if not isinstance(element, hlp):
+            QMessageBox.warning(self, "Attention", "Cet élément n'est pas un HLP")
+            return
+
+        # Retirer le HLP
+        service.voyages.remove(element)
+
+        # Rafraîchir
+        self.timeline.redessiner()
+        self.on_service_change()
 
     def ajouter_pause(self):
         """Ajoute une pause au service sélectionné"""
@@ -501,10 +643,12 @@ class PanneauGauche(QFrame):
 
     def on_service_change(self):
         try:
+            from objet import hlp  # ✨ AJOUTEZ CETTE LIGNE
+
             idx = self.combo_services.currentData()
             if idx is None or idx >= len(self.timeline.services):
                 self.table_service.setRowCount(0)
-                self.table_pauses.setRowCount(0)  # ✨ NOUVEAU
+                self.table_pauses.setRowCount(0)
                 return
 
             service = self.timeline.services[idx]
@@ -516,14 +660,25 @@ class PanneauGauche(QFrame):
                 if voy is None:
                     continue
 
-                valeurs = [
-                    voy.num_ligne,
-                    voy.num_voyage,
-                    voyage.minutes_to_time(voy.hdebut),
-                    voyage.minutes_to_time(voy.hfin),
-                    voy.arret_debut,
-                    voy.arret_fin
-                ]
+                # ✨ MODIFIÉ : Gérer l'affichage des HLP
+                if isinstance(voy, hlp):
+                    valeurs = [
+                        "🚗 HLP",  # Ligne
+                        "",  # Voyage
+                        voyage.minutes_to_time(voy.hdebut),
+                        voyage.minutes_to_time(voy.hfin),
+                        voy.arret_depart,
+                        voy.arret_arrivee
+                    ]
+                else:
+                    valeurs = [
+                        voy.num_ligne,
+                        voy.num_voyage,
+                        voyage.minutes_to_time(voy.hdebut),
+                        voyage.minutes_to_time(voy.hfin),
+                        voy.arret_debut,
+                        voy.arret_fin
+                    ]
 
                 for col, val in enumerate(valeurs):
                     item = QTableWidgetItem(str(val))
@@ -531,6 +686,7 @@ class PanneauGauche(QFrame):
                     self.table_service.setItem(row, col, item)
 
             self.refresh_pauses()
+
         except Exception as e:
             print(f"❌ Erreur on_service_change: {e}")
             import traceback
@@ -782,6 +938,220 @@ class DialogAjoutPause(QDialog):
             t_debut.hour() * 60 + t_debut.minute(),
             t_fin.hour() * 60 + t_fin.minute()
         )
+
+
+class DialogAjoutHLP(QDialog):
+    """Dialogue pour ajouter manuellement un HLP dans un service"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ajouter un HLP (Haut-Le-Pied)")
+        self.setMinimumWidth(350)
+
+        layout = QFormLayout(self)
+
+        # Info
+        info = QLabel("🚗 Un HLP est un déplacement à vide entre deux points")
+        info.setStyleSheet("background-color: #fff3cd; padding: 5px; border-radius: 3px;")
+        info.setWordWrap(True)
+        layout.addRow(info)
+
+        # Arrêt de départ
+        self.edit_depart = QLineEdit()
+        self.edit_depart.setPlaceholderText("Ex: Gare Centrale")
+        layout.addRow("Arrêt de départ:", self.edit_depart)
+
+        # Arrêt d'arrivée
+        self.edit_arrivee = QLineEdit()
+        self.edit_arrivee.setPlaceholderText("Ex: Dépôt Nord")
+        layout.addRow("Arrêt d'arrivée:", self.edit_arrivee)
+
+        # Heure de début
+        self.time_debut = QTimeEdit()
+        self.time_debut.setTime(QTime(12, 0))
+        self.time_debut.setDisplayFormat("HH:mm")
+        layout.addRow("Heure de début:", self.time_debut)
+
+        # Heure de fin
+        self.time_fin = QTimeEdit()
+        self.time_fin.setTime(QTime(12, 30))
+        self.time_fin.setDisplayFormat("HH:mm")
+        layout.addRow("Heure de fin:", self.time_fin)
+
+        # Durée calculée
+        self.label_duree = QLabel()
+        layout.addRow("Durée:", self.label_duree)
+
+        # Mise à jour automatique de la durée
+        self.time_debut.timeChanged.connect(self.update_duree)
+        self.time_fin.timeChanged.connect(self.update_duree)
+        self.update_duree()
+
+        # Boutons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def update_duree(self):
+        t_debut = self.time_debut.time()
+        t_fin = self.time_fin.time()
+
+        minutes_debut = t_debut.hour() * 60 + t_debut.minute()
+        minutes_fin = t_fin.hour() * 60 + t_fin.minute()
+
+        duree = minutes_fin - minutes_debut
+        if duree < 0:
+            duree += 24 * 60
+
+        heures = duree // 60
+        minutes = duree % 60
+        self.label_duree.setText(f"{heures}h{minutes:02d}")
+
+    def get_hlp_data(self):
+        """Retourne les données du HLP"""
+        t_debut = self.time_debut.time()
+        t_fin = self.time_fin.time()
+
+        return {
+            'arret_depart': self.edit_depart.text(),
+            'arret_arrivee': self.edit_arrivee.text(),
+            'hdebut': t_debut.hour() * 60 + t_debut.minute(),
+            'hfin': t_fin.hour() * 60 + t_fin.minute()
+        }
+
+class DialogProposerHLP(QDialog):
+    """Dialogue pour proposer la création automatique de HLP"""
+
+    def __init__(self, ruptures, parent=None):
+        super().__init__(parent)
+        self.ruptures = ruptures
+        self.hlp_a_creer = []
+
+        self.setWindowTitle("Ruptures géographiques détectées")
+        self.setMinimumSize(700, 500)
+
+        layout = QVBoxLayout(self)
+
+        # Header
+        header = QLabel(f"⚠️ {len(ruptures)} rupture(s) géographique(s) détectée(s)")
+        header.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        header.setStyleSheet("background-color: #e67e22; color: white; padding: 10px;")
+        layout.addWidget(header)
+
+        info = QLabel(
+            "Les voyages suivants ne se suivent pas géographiquement.\n"
+            "Des HLP (déplacements à vide) peuvent être créés pour assurer la continuité."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("padding: 10px; background-color: #fff3cd; border-radius: 5px;")
+        layout.addWidget(info)
+
+        # Tableau des ruptures
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels([
+            'Service', 'Voyage 1', 'Arrivée', 'Voyage 2', 'Départ', 'Créer HLP'
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setAlternatingRowColors(True)
+        layout.addWidget(self.table)
+
+        self._remplir_table()
+
+        # Boutons
+        buttons_layout = QHBoxLayout()
+
+        btn_tout_selectionner = QPushButton("✅ Tout sélectionner")
+        btn_tout_selectionner.clicked.connect(self.tout_selectionner)
+        buttons_layout.addWidget(btn_tout_selectionner)
+
+        btn_tout_deselectionner = QPushButton("❌ Tout désélectionner")
+        btn_tout_deselectionner.clicked.connect(self.tout_deselectionner)
+        buttons_layout.addWidget(btn_tout_deselectionner)
+
+        layout.addLayout(buttons_layout)
+
+        # Boutons finaux
+        buttons_final = QHBoxLayout()
+
+        btn_creer = QPushButton("🚗 Créer les HLP sélectionnés")
+        btn_creer.setStyleSheet("background-color: #27ae60; color: white; padding: 10px; font-weight: bold;")
+        btn_creer.clicked.connect(self.creer_hlp)
+        buttons_final.addWidget(btn_creer)
+
+        btn_ignorer = QPushButton("Ignorer")
+        btn_ignorer.clicked.connect(self.reject)
+        buttons_final.addWidget(btn_ignorer)
+
+        layout.addLayout(buttons_final)
+
+    def _remplir_table(self):
+        self.table.setRowCount(len(self.ruptures))
+        self.checkboxes = []
+
+        for row, rupture in enumerate(self.ruptures):
+            # Service
+            item_service = QTableWidgetItem(rupture['service_nom'])
+            item_service.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 0, item_service)
+
+            # Voyage 1
+            voy1 = rupture['voyage1']
+            item_voy1 = QTableWidgetItem(f"{voy1.num_ligne}-{voy1.num_voyage}")
+            item_voy1.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 1, item_voy1)
+
+            # Arrivée
+            item_arr = QTableWidgetItem(voy1.arret_fin)
+            item_arr.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 2, item_arr)
+
+            # Voyage 2
+            voy2 = rupture['voyage2']
+            item_voy2 = QTableWidgetItem(f"{voy2.num_ligne}-{voy2.num_voyage}")
+            item_voy2.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 3, item_voy2)
+
+            # Départ
+            item_dep = QTableWidgetItem(voy2.arret_debut)
+            item_dep.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 4, item_dep)
+
+            # Checkbox
+            checkbox = QTableWidgetItem()
+            checkbox.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            checkbox.setCheckState(Qt.CheckState.Checked)  # Coché par défaut
+            checkbox.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 5, checkbox)
+            self.checkboxes.append(checkbox)
+
+    def tout_selectionner(self):
+        for checkbox in self.checkboxes:
+            checkbox.setCheckState(Qt.CheckState.Checked)
+
+    def tout_deselectionner(self):
+        for checkbox in self.checkboxes:
+            checkbox.setCheckState(Qt.CheckState.Unchecked)
+
+    def creer_hlp(self):
+        """Collecte les HLP à créer"""
+        self.hlp_a_creer = []
+
+        for i, checkbox in enumerate(self.checkboxes):
+            if checkbox.checkState() == Qt.CheckState.Checked:
+                rupture = self.ruptures[i]
+                self.hlp_a_creer.append(rupture)
+
+        if self.hlp_a_creer:
+            self.accept()
+        else:
+            QMessageBox.warning(self, "Attention", "Sélectionnez au moins un HLP à créer")
+
+    def get_hlp_a_creer(self):
+        return self.hlp_a_creer
 
 # ==================== PANNEAU DÉTAILS ====================
 
@@ -1238,7 +1608,7 @@ class MainWindow(QMainWindow):
             # Réinitialiser TOUS les services
             print("   Réinitialisation des services...")
             for service in self.timeline.services:
-                service.voyages.clear()  # Clear au lieu de = []
+                service.voyages.clear()
 
             # Réinitialiser l'état de TOUS les voyages
             print("   Réinitialisation des voyages...")
@@ -1260,23 +1630,18 @@ class MainWindow(QMainWindow):
                 for voy_data in voyages_list:
                     v_idx = voy_data["index"]
 
-                    # Vérifier que l'index est valide
                     if v_idx >= len(self.panneau_gauche.voyages_importes):
                         print(f"   ⚠️ Index voyage {v_idx} invalide, skip")
                         continue
 
-                    # Récupérer le voyage ORIGINAL depuis voyages_importes
                     voy_original = self.panneau_gauche.voyages_importes[v_idx]
 
-                    # Vérification de sécurité
                     if voy_original is None:
                         print(f"   ⚠️ Voyage à l'index {v_idx} est None, skip")
                         continue
 
-                    # Ajouter au service
                     service.voyages.append(voy_original)
 
-                    # Marquer comme assigné
                     voy_original.assigne = True
                     nom_service = f"Service {service.num_service}" if service.num_service else f"Service {service_id + 1}"
                     voy_original.service_assigne = nom_service
@@ -1285,30 +1650,41 @@ class MainWindow(QMainWindow):
 
             print(f"   ✅ {len(voyages_a_assigner)} voyages assignés")
 
-            # Rafraîchir l'interface dans l'ordre correct
+            # ✨ NOUVEAU : Détecter les ruptures géographiques
+            print("   🔍 Détection des ruptures géographiques...")
+            ruptures = self.detecter_ruptures_geo()
+
+            if ruptures:
+                print(f"   ⚠️ {len(ruptures)} rupture(s) détectée(s)")
+
+                # Proposer de créer des HLP
+                dialog = DialogProposerHLP(ruptures, self)
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    hlp_a_creer = dialog.get_hlp_a_creer()
+                    print(f"   🚗 Création de {len(hlp_a_creer)} HLP...")
+                    self.creer_hlp_auto(hlp_a_creer)
+            else:
+                print("   ✅ Aucune rupture géographique")
+
+            # Rafraîchir l'interface
             print("   Rafraîchissement de l'interface...")
-
-            # 1. Timeline en premier
             self.timeline.redessiner()
-
-            # 2. Table des voyages importés
             self.panneau_gauche.refresh_table_importes()
-
-            # 3. Combo des services
             self.panneau_gauche.refresh_combo_services()
 
-            # 4. Si un service est sélectionné, rafraîchir sa table
             if self.panneau_gauche.combo_services.currentData() is not None:
                 self.panneau_gauche.on_service_change()
 
-            # 5. Effacer les détails du voyage sélectionné
             self.panneau_details.effacer()
 
             print("✅ Solution appliquée avec succès")
 
             self.label_info.setText("✅ Solution appliquée avec succès !")
-            QMessageBox.information(self, "Succès",
-                                    f"La solution d'optimisation a été appliquée\n{len(voyages_a_assigner)} voyage(s) assigné(s)")
+
+            msg = f"La solution d'optimisation a été appliquée\n{len(voyages_a_assigner)} voyage(s) assigné(s)"
+            if ruptures:
+                msg += f"\n{len(hlp_a_creer if 'hlp_a_creer' in locals() else [])} HLP créé(s)"
+            QMessageBox.information(self, "Succès", msg)
 
         except Exception as e:
             print(f"❌ Erreur lors de l'application: {e}")
@@ -1317,6 +1693,80 @@ class MainWindow(QMainWindow):
 
             QMessageBox.critical(self, "Erreur", f"Erreur lors de l'application de la solution:\n{str(e)}")
             self.label_info.setText("❌ Erreur lors de l'application")
+
+    def detecter_ruptures_geo(self):
+        """Détecte les ruptures géographiques dans tous les services"""
+        ruptures = []
+
+        for service_id, service in enumerate(self.timeline.services):
+            voyages_list = service.get_voyages()
+
+            # Trier par heure de début
+            voyages_list_sorted = sorted(voyages_list, key=lambda v: v.hdebut)
+
+            for i in range(len(voyages_list_sorted) - 1):
+                voy1 = voyages_list_sorted[i]
+                voy2 = voyages_list_sorted[i + 1]
+
+                try:
+                    if voy1.arret_fin_id() != voy2.arret_debut_id():
+                        # Rupture détectée
+                        service_nom = f"Service {service.num_service}" if service.num_service else f"Service {service_id + 1}"
+
+                        ruptures.append({
+                            'service_id': service_id,
+                            'service': service,
+                            'service_nom': service_nom,
+                            'voyage1': voy1,
+                            'voyage2': voy2,
+                            'position': i  # Position du HLP dans la liste
+                        })
+                except Exception as e:
+                    print(f"⚠️ Erreur vérification géo: {e}")
+
+        return ruptures
+
+    def creer_hlp_auto(self, ruptures_hlp):
+        """Crée automatiquement des HLP pour les ruptures sélectionnées"""
+        from objet import hlp, voyage
+
+        for rupture in ruptures_hlp:
+            service = rupture['service']
+            voy1 = rupture['voyage1']
+            voy2 = rupture['voyage2']
+
+            # Calculer heure de début et durée du HLP
+            hdebut_hlp = voy1.hfin
+            hfin_hlp = voy2.hdebut
+            duree_hlp = hfin_hlp - hdebut_hlp  # ✅ Calculer la durée
+
+            # ✅ Créer le HLP avec les bons arguments
+            hlp_obj = hlp(
+                arret_depart=voy1.arret_fin,
+                arret_arrivee=voy2.arret_debut,
+                duree=duree_hlp,  # ✅ Passer la durée
+                heure_debut=hdebut_hlp  # ✅ Passer heure_debut
+            )
+
+            # Attributs pour compatibilité avec l'affichage
+            hlp_obj.hdebut = hdebut_hlp  # Pour la timeline
+            hlp_obj.hfin = hfin_hlp  # Pour la timeline
+            hlp_obj.couleur = '#95a5a6'  # Gris pour HLP
+
+            # Ajouter au service à la bonne position
+            voyages_list = service.get_voyages()
+
+            # Trouver la position d'insertion
+            insert_pos = len(voyages_list)
+            for i, v in enumerate(voyages_list):
+                if v.hdebut > hfin_hlp:
+                    insert_pos = i
+                    break
+
+            service.voyages.insert(insert_pos, hlp_obj)
+
+            print(f"   ✅ HLP créé: {voy1.arret_fin} → {voy2.arret_debut} (durée: {duree_hlp} min)")
+
     def on_voyage_selected(self, voy):
         self.panneau_details.afficher(voy)
         self.label_info.setText(f"Voyage sélectionné: {voy.num_ligne}-{voy.num_voyage}")
