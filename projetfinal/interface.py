@@ -1185,25 +1185,57 @@ class DialogProposerHLP(QDialog):
 
     def creer_hlp(self):
         """Collecte les HLP à créer avec leurs durées personnalisées"""
+
+        # ✨ NOUVEAU : Forcer la validation de tous les spinbox
+        for spinbox in self.spinboxes_duree:
+            spinbox.interpretText()  # Force la validation de la valeur tapée
+            spinbox.clearFocus()  # Retire le focus
+
         self.hlp_a_creer = []
+
+        resume = "📋 Récapitulatif des HLP à créer :\n\n"
 
         for i, checkbox in enumerate(self.checkboxes):
             if checkbox.checkState() == Qt.CheckState.Checked:
                 rupture = self.ruptures[i].copy()
 
-                # ✨ Ajouter la durée personnalisée
+                # Ajouter la durée personnalisée
                 duree_personnalisee = self.spinboxes_duree[i].value()
                 rupture['duree_hlp'] = duree_personnalisee
 
-                # ✨ DEBUG
+                # ✨ Ajouter au résumé
+                voy1 = rupture['voyage1']
+                voy2 = rupture['voyage2']
+                service_nom = rupture['service_nom']
+                resume += f"🚗 {service_nom} : HLP de {duree_personnalisee} min\n"
+                resume += f"   {voy1.arret_fin} → {voy2.arret_debut}\n\n"
+
                 print(f"   🔍 Spinbox {i}: valeur = {duree_personnalisee} min")
 
                 self.hlp_a_creer.append(rupture)
 
-        if self.hlp_a_creer:
-            self.accept()
-        else:
+        if not self.hlp_a_creer:
             QMessageBox.warning(self, "Attention", "Sélectionnez au moins un HLP à créer")
+            return
+
+        # ✨ NOUVEAU : Confirmation avec résumé détaillé
+        resume += f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        resume += f"📊 Total : {len(self.hlp_a_creer)} HLP à créer\n"
+        resume += f"\n⚠️ Vérifiez bien les durées ci-dessus !"
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setWindowTitle("Confirmer la création des HLP")
+        msg.setText(resume)
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+
+        # Rendre le texte plus lisible
+        msg.setStyleSheet("QLabel { font-family: Consolas, monospace; }")
+
+        if msg.exec() == QMessageBox.StandardButton.Yes:
+            self.accept()
+
 
     def get_hlp_a_creer(self):
         return self.hlp_a_creer
