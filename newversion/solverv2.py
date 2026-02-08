@@ -251,6 +251,7 @@ class SolverOptimise:
             ("Par heure de fin", lambda v: v['voyage'].hfin),
             ("Par ligne puis heure", lambda v: (v['voyage'].num_ligne, v['voyage'].hdebut)),
             ("Ordre inversé", lambda v: -v['voyage'].hdebut),
+            ("Une ligne par service", lambda v: (v['voyage'].num_ligne, v['voyage'].hdebut)),  # 6ème stratégie
         ]
 
     def initialiser_services(self):
@@ -303,6 +304,9 @@ class SolverOptimise:
         """
         start_time = time.time()
 
+        # Déterminer si on applique la contrainte "une ligne par service"
+        contrainte_ligne_unique = (strategie_nom == "Une ligne par service")
+
         # Initialisation
         services_opt = self.initialiser_services()
         voyages_info = self.initialiser_voyages()
@@ -338,6 +342,16 @@ class SolverOptimise:
                 # Vérifier les pauses
                 if hasattr(service_orig, 'pauses') and service_orig.est_dans_pause(voy.hdebut, voy.hfin):
                     continue
+
+                # NOUVELLE CONTRAINTE : Vérifier si une seule ligne par service
+                if contrainte_ligne_unique and service_opt.voyages:
+                    # Vérifier que tous les voyages du service sont de la même ligne
+                    try:
+                        ligne_service = service_opt.voyages[0]['voyage_obj'].num_ligne
+                        if voy.num_ligne != ligne_service:
+                            continue  # Skip ce service, ligne différente
+                    except:
+                        pass  # Si pas de num_ligne, continuer normalement
 
                 # Calculer le score
                 score = calculer_score_intelligent(voy, service_opt, self.cache_geo, service_orig)
@@ -559,6 +573,22 @@ def analyser_solution(solution, voyages_list):
     nb_voyages_par_service = [len(v) for v in solution['services'].values()]
     equilibrage = max(nb_voyages_par_service) - min(nb_voyages_par_service) if nb_voyages_par_service else 0
 
+    # Analyser les lignes par service
+    nb_lignes_par_service = []
+    respect_ligne_unique = True
+
+    for voyages in solution['services'].values():
+        if voyages:
+            try:
+                lignes = set(v['voyage_obj'].num_ligne for v in voyages)
+                nb_lignes_par_service.append(len(lignes))
+                if len(lignes) > 1:
+                    respect_ligne_unique = False
+            except:
+                pass
+
+    nb_services_multi_lignes = sum(1 for n in nb_lignes_par_service if n > 1)
+
     return {
         'taux_assignation': taux_assignation,
         'nb_assignes': total_assignes,
@@ -567,7 +597,10 @@ def analyser_solution(solution, voyages_list):
         'nb_continuite': nb_continuite,
         'nb_transitions': nb_transitions,
         'equilibrage': equilibrage,
-        'strategie': solution.get('strategie', 'Inconnue')
+        'strategie': solution.get('strategie', 'Inconnue'),
+        'respect_ligne_unique': respect_ligne_unique,
+        'nb_services_multi_lignes': nb_services_multi_lignes,
+        'nb_lignes_par_service': nb_lignes_par_service
     }
 
 
@@ -575,14 +608,14 @@ def analyser_solution(solution, voyages_list):
 # FONCTION PRINCIPALE (Compatible avec l'ancien code)
 # =============================================================================
 
-def optimiser_services(voyages_list, services_list, max_solutions=5, amelioration_locale=False):
+def optimiser_services(voyages_list, services_list, max_solutions=6, amelioration_locale=False):
     """
     Fonction principale d'optimisation (compatible avec l'ancienne interface)
 
     Args:
         voyages_list: Liste des voyages à assigner
         services_list: Liste des services disponibles
-        max_solutions: Nombre maximum de solutions à générer
+        max_solutions: Nombre maximum de solutions à générer (défaut: 6)
         amelioration_locale: Active l'amélioration locale (plus lent mais meilleur)
 
     Returns:
@@ -599,6 +632,12 @@ def optimiser_services(voyages_list, services_list, max_solutions=5, amelioratio
         print(f"      Assignation: {metrics['taux_assignation']:.1f}% ({metrics['nb_assignes']}/{metrics['nb_total']})")
         print(f"      Continuité géo: {metrics['taux_continuite']:.1f}% ({metrics['nb_continuite']}/{metrics['nb_transitions']})")
         print(f"      Équilibrage: {metrics['equilibrage']} voyages d'écart")
+
+        # Afficher les infos sur les lignes
+        if metrics['respect_ligne_unique']:
+            print(f"      Lignes: ✅ Une ligne par service")
+        else:
+            print(f"      Lignes: ⚠️  {metrics['nb_services_multi_lignes']} service(s) avec plusieurs lignes")
 
     return solutions
 
