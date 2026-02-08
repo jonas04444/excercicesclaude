@@ -42,7 +42,6 @@ class CacheGeo:
             arret_fin = str(voyage1.arret_fin_id())
             arret_debut = str(voyage2.arret_debut_id())
 
-            # Comparer les 3 premiers caractères
             result = arret_fin[:3].upper() == arret_debut[:3].upper()
         except:
             result = False
