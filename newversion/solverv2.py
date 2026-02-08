@@ -39,7 +39,11 @@ class CacheGeo:
 
         self.misses += 1
         try:
-            result = voyage1.arret_fin_id() == voyage2.arret_debut_id()
+            arret_fin = str(voyage1.arret_fin_id())
+            arret_debut = str(voyage2.arret_debut_id())
+
+            # Comparer les 3 premiers caractères
+            result = arret_fin[:3].upper() == arret_debut[:3].upper()
         except:
             result = False
 
@@ -349,7 +353,7 @@ class SolverOptimise:
                     try:
                         ligne_service = service_opt.voyages[0]['voyage_obj'].num_ligne
                         if voy.num_ligne != ligne_service:
-                            continue  # Skip ce service, ligne différente
+                            continue
                     except:
                         pass  # Si pas de num_ligne, continuer normalement
 
