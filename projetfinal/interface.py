@@ -36,18 +36,16 @@ class VoyageGraphique(QGraphicsRectItem):
     """Rectangle représentant un voyage sur la timeline"""
 
     def __init__(self, voyage_obj, y_pos, pixels_par_heure, parent_view):
-        from objet import hlp  # ✅ Importer hlp
+        from objet import hlp
 
         self.voyage_obj = voyage_obj
         self.parent_view = parent_view
 
-        # ✅ MODIFIÉ : Gérer les attributs différents de hlp
+        # Gérer les attributs différents de hlp
         if isinstance(voyage_obj, hlp):
-            # Pour HLP : utiliser heure_debut au lieu de hdebut
             heure_debut = getattr(voyage_obj, 'hdebut', voyage_obj.heure_debut) / 60
             heure_fin = getattr(voyage_obj, 'hfin', voyage_obj.heure_fin) / 60
         else:
-            # Pour voyage normal
             heure_debut = voyage_obj.hdebut / 60
             heure_fin = voyage_obj.hfin / 60
 
@@ -59,21 +57,25 @@ class VoyageGraphique(QGraphicsRectItem):
 
         super().__init__(x, y_pos + 5, largeur, hauteur)
 
-        # ✅ Couleur différente pour les HLP
+        # Couleur et texte
         if isinstance(voyage_obj, hlp):
-            couleur = QColor('#95a5a6')  # Gris pour les HLP
-            nom = f"🚗 HLP"
+            couleur = QColor('#95a5a6')
+            nom = "HLP"
         else:
             couleur = QColor(getattr(voyage_obj, 'couleur', '#3498db'))
-            nom = f"{voyage_obj.num_ligne}-{voyage_obj.num_voyage}"
+            # ✅ MODIFIÉ : Afficher seulement le numéro de ligne
+            nom = str(voyage_obj.num_ligne)
 
         self.setBrush(QBrush(couleur))
         self.setPen(QPen(couleur.darker(120), 2))
 
-        # Texte
+        # Texte centré
         self.text_item = QGraphicsTextItem(nom, self)
         self.text_item.setDefaultTextColor(Qt.GlobalColor.white)
-        self.text_item.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+
+        # ✅ Taille de police adaptative selon la largeur
+        font_size = 9 if largeur > 40 else 7
+        self.text_item.setFont(QFont("Arial", font_size, QFont.Weight.Bold))
 
         # Centrer le texte
         text_rect = self.text_item.boundingRect()
@@ -86,7 +88,7 @@ class VoyageGraphique(QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # ✅ Tooltip pour HLP
+        # Tooltip avec toutes les infos
         if isinstance(voyage_obj, hlp):
             from objet import voyage
             h_debut = voyage.minutes_to_time(voyage_obj.heure_debut)
@@ -101,8 +103,8 @@ class VoyageGraphique(QGraphicsRectItem):
         else:
             from objet import voyage
             self.setToolTip(
-                f"{nom}\n"
                 f"Ligne: {voyage_obj.num_ligne}\n"
+                f"Voyage: {voyage_obj.num_voyage}\n"
                 f"De: {voyage_obj.arret_debut}\n"
                 f"À: {voyage_obj.arret_fin}\n"
                 f"Heure: {voyage.minutes_to_time(voyage_obj.hdebut)} - {voyage.minutes_to_time(voyage_obj.hfin)}"
@@ -318,6 +320,30 @@ class PanneauGauche(QFrame):
         btn_import.clicked.connect(self.importer_csv)
         layout.addWidget(btn_import)
 
+        btn_import_services = QPushButton("📥 Importer CSV avec Services")
+        btn_import_services.setStyleSheet("background-color: #9b59b6; color: white; padding: 10px;")
+        btn_import_services.clicked.connect(self.importer_csv_avec_services)
+        layout.addWidget(btn_import_services)
+
+        btn_voyages_row = QHBoxLayout()
+
+        btn_ajouter_voyage = QPushButton("➕ Ajouter")
+        btn_ajouter_voyage.setStyleSheet("background-color: #27ae60; color: white;")
+        btn_ajouter_voyage.clicked.connect(self.ajouter_voyage_manuel)
+        btn_voyages_row.addWidget(btn_ajouter_voyage)
+
+        btn_modifier_voyage = QPushButton("✏️ Modifier")
+        btn_modifier_voyage.setStyleSheet("background-color: #f39c12; color: white;")
+        btn_modifier_voyage.clicked.connect(self.modifier_voyage)
+        btn_voyages_row.addWidget(btn_modifier_voyage)
+
+        btn_supprimer_voyage = QPushButton("🗑️ Supprimer")
+        btn_supprimer_voyage.setStyleSheet("background-color: #e74c3c; color: white;")
+        btn_supprimer_voyage.clicked.connect(self.supprimer_voyage)
+        btn_voyages_row.addWidget(btn_supprimer_voyage)
+
+        layout.addLayout(btn_voyages_row)
+
         # Tableau voyages importés
         self.table_importes = QTableWidget()
         self.table_importes.setColumnCount(7)
@@ -418,6 +444,163 @@ class PanneauGauche(QFrame):
 
         layout.addLayout(btn_assign_row)
         layout.addStretch()
+
+    def ajouter_voyage_manuel(self):
+        """Ajoute un voyage manuellement"""
+        dialog = DialogVoyage(parent=self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.get_voyage_data()
+
+            # Créer l'objet voyage
+            voy = voyage(
+                num_ligne=data['num_ligne'],
+                num_voyage=data['num_voyage'],
+                arret_debut=data['arret_debut'],
+                arret_fin=data['arret_fin'],
+                heure_debut=data['heure_debut_str'],
+                heure_fin=data['heure_fin_str'],
+                js_srv=data['js_srv']
+            )
+            voy.couleur = '#3498db'
+            voy.assigne = False
+            voy.service_assigne = None
+
+            self.voyages_importes.append(voy)
+            self.refresh_table_importes()
+
+            QMessageBox.information(self, "Succès", f"Voyage {data['num_ligne']}-{data['num_voyage']} ajouté !")
+
+    def modifier_voyage(self):
+        """Modifie le voyage sélectionné"""
+        try:
+            selection = self.table_importes.selectedItems()
+            if not selection:
+                QMessageBox.warning(self, "Attention", "Sélectionnez un voyage à modifier")
+                return
+
+            row = selection[0].row()
+            if row >= len(self.voyages_importes):
+                return
+
+            voy = self.voyages_importes[row]
+
+            if voy is None:
+                QMessageBox.warning(self, "Erreur", "Voyage invalide")
+                return
+
+            # Vérifier si le voyage est assigné
+            if getattr(voy, 'assigne', False):
+                QMessageBox.warning(
+                    self, "Attention",
+                    "Ce voyage est assigné à un service.\n"
+                    "Retirez-le d'abord du service avant de le modifier."
+                )
+                return
+
+            dialog = DialogVoyage(voyage_obj=voy, parent=self)
+
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                data = dialog.get_voyage_data()
+
+                # Mettre à jour l'objet voyage
+                voy.num_ligne = data['num_ligne']
+                voy.num_voyage = data['num_voyage']
+                voy.arret_debut = data['arret_debut']
+                voy.arret_fin = data['arret_fin']
+                voy.hdebut = data['hdebut']
+                voy.hfin = data['hfin']
+                voy.js_srv = data['js_srv']
+
+                self.refresh_table_importes()
+                QMessageBox.information(self, "Succès", "Voyage modifié !")
+
+        except Exception as e:
+            print(f"❌ Erreur modifier_voyage: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Erreur", f"Erreur: {str(e)}")
+
+    def supprimer_voyage(self):
+        """Supprime le voyage sélectionné"""
+        selection = self.table_importes.selectedItems()
+        if not selection:
+            QMessageBox.warning(self, "Attention", "Sélectionnez un voyage à supprimer")
+            return
+
+        row = selection[0].row()
+        if row >= len(self.voyages_importes):
+            return
+
+        voy = self.voyages_importes[row]
+
+        # Vérifier si le voyage est assigné
+        if getattr(voy, 'assigne', False):
+            QMessageBox.warning(
+                self, "Attention",
+                f"Ce voyage est assigné à {voy.service_assigne}.\n"
+                "Retirez-le d'abord du service avant de le supprimer."
+            )
+            return
+
+        # Confirmation
+        reply = QMessageBox.question(
+            self, "Confirmation",
+            f"Supprimer le voyage {voy.num_ligne}-{voy.num_voyage} ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.voyages_importes.remove(voy)
+            self.refresh_table_importes()
+            QMessageBox.information(self, "Succès", "Voyage supprimé !")
+
+    def importer_csv_avec_services(self):
+        """Importe un CSV et crée automatiquement les services"""
+        from import_csv_services import DialogImportCSVAvecServices
+
+        dialog = DialogImportCSVAvecServices(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            services_data = dialog.get_services_a_creer()
+
+            for service_data in services_data:
+                # Créer le service_agent
+                service = service_agent(
+                    num_service=service_data['num_service'],
+                    type_service=service_data['type_service']
+                )
+                service.set_limites(service_data['heure_debut'], service_data['heure_fin'])
+                service.couleur = service_data['couleur']
+
+                # Créer et ajouter les voyages
+                for voy_data in service_data['voyages']:
+                    voy = voyage(
+                        num_ligne=voy_data['num_ligne'],
+                        num_voyage=voy_data['num_voyage'],
+                        arret_debut=voy_data['arret_debut'],
+                        arret_fin=voy_data['arret_fin'],
+                        heure_debut=voy_data['heure_debut_str'],
+                        heure_fin=voy_data['heure_fin_str'],
+                        js_srv=voy_data.get('js_srv', '')
+                    )
+                    voy.couleur = '#3498db'
+                    voy.assigne = True
+                    voy.service_assigne = service_data['nom']
+
+                    service.voyages.append(voy)
+                    self.voyages_importes.append(voy)
+
+                # Ajouter le service à la timeline
+                self.timeline.ajouter_service(service)
+
+            # Rafraîchir l'interface
+            self.refresh_table_importes()
+            self.refresh_combo_services()
+
+            QMessageBox.information(
+                self, "Import réussi",
+                f"{len(services_data)} service(s) créé(s) avec leurs voyages !"
+            )
 
     def ajouter_hlp(self):
         """Ajoute un HLP au service sélectionné"""
@@ -827,7 +1010,156 @@ class PanneauGauche(QFrame):
             traceback.print_exc()
             QMessageBox.critical(self, "Erreur", f"Erreur: {str(e)}")
 
+class DialogVoyage(QDialog):
+    """Dialogue pour ajouter ou modifier un voyage"""
 
+    def __init__(self, voyage_obj=None, parent=None):
+        super().__init__(parent)
+        self.voyage_obj = voyage_obj
+        self.mode_edition = voyage_obj is not None
+
+        if self.mode_edition:
+            self.setWindowTitle("✏️ Modifier le voyage")
+        else:
+            self.setWindowTitle("➕ Ajouter un voyage")
+
+        self.setMinimumWidth(400)
+
+        layout = QFormLayout(self)
+
+        # Numéro de ligne
+        self.edit_ligne = QLineEdit()
+        self.edit_ligne.setPlaceholderText("Ex: C109b")
+        layout.addRow("Numéro de ligne:", self.edit_ligne)
+
+        # Numéro de voyage
+        self.edit_voyage = QLineEdit()
+        self.edit_voyage.setPlaceholderText("Ex: 2")
+        layout.addRow("Numéro de voyage:", self.edit_voyage)
+
+        # Heure de début
+        self.time_debut = QTimeEdit()
+        self.time_debut.setDisplayFormat("HH:mm")
+        self.time_debut.setTime(QTime(7, 0))
+        layout.addRow("Heure de début:", self.time_debut)
+
+        # Heure de fin
+        self.time_fin = QTimeEdit()
+        self.time_fin.setDisplayFormat("HH:mm")
+        self.time_fin.setTime(QTime(8, 0))
+        layout.addRow("Heure de fin:", self.time_fin)
+
+        # Arrêt de départ
+        self.edit_depart = QLineEdit()
+        self.edit_depart.setPlaceholderText("Ex: LBGAR")
+        layout.addRow("Arrêt de départ:", self.edit_depart)
+
+        # Arrêt d'arrivée
+        self.edit_arrivee = QLineEdit()
+        self.edit_arrivee.setPlaceholderText("Ex: TUBPO")
+        layout.addRow("Arrêt d'arrivée:", self.edit_arrivee)
+
+        # Jours de service
+        self.edit_js_srv = QLineEdit()
+        self.edit_js_srv.setPlaceholderText("Ex: LMaMeJV")
+        layout.addRow("Jours de service:", self.edit_js_srv)
+
+        # Durée calculée
+        self.label_duree = QLabel()
+        layout.addRow("Durée:", self.label_duree)
+
+        # Mise à jour automatique de la durée
+        self.time_debut.timeChanged.connect(self.update_duree)
+        self.time_fin.timeChanged.connect(self.update_duree)
+
+        # Si mode édition, pré-remplir les champs
+        if self.mode_edition and voyage_obj:
+            try:
+                self.edit_ligne.setText(str(getattr(voyage_obj, 'num_ligne', '')))
+                self.edit_voyage.setText(str(getattr(voyage_obj, 'num_voyage', '')))
+
+                # Récupérer hdebut/hfin avec valeur par défaut
+                hdebut = getattr(voyage_obj, 'hdebut', 0) or 0
+                hfin = getattr(voyage_obj, 'hfin', 60) or 60
+
+                h_debut = int(hdebut) // 60
+                m_debut = int(hdebut) % 60
+                self.time_debut.setTime(QTime(h_debut, m_debut))
+
+                h_fin = int(hfin) // 60
+                m_fin = int(hfin) % 60
+                self.time_fin.setTime(QTime(h_fin, m_fin))
+
+                self.edit_depart.setText(str(getattr(voyage_obj, 'arret_debut', '') or ''))
+                self.edit_arrivee.setText(str(getattr(voyage_obj, 'arret_fin', '') or ''))
+                self.edit_js_srv.setText(str(getattr(voyage_obj, 'js_srv', '') or ''))
+
+            except Exception as e:
+                print(f"❌ Erreur pré-remplissage: {e}")
+
+        self.update_duree()
+
+        # Boutons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.valider)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def update_duree(self):
+        """Met à jour l'affichage de la durée"""
+        try:
+            t_debut = self.time_debut.time()
+            t_fin = self.time_fin.time()
+
+            minutes_debut = t_debut.hour() * 60 + t_debut.minute()
+            minutes_fin = t_fin.hour() * 60 + t_fin.minute()
+
+            duree = minutes_fin - minutes_debut
+            if duree < 0:
+                duree += 24 * 60
+
+            heures = duree // 60
+            minutes = duree % 60
+            self.label_duree.setText(f"{heures}h{minutes:02d}")
+        except:
+            self.label_duree.setText("--")
+
+    def valider(self):
+        """Valide les données saisies"""
+        if not self.edit_ligne.text().strip():
+            QMessageBox.warning(self, "Attention", "Veuillez entrer un numéro de ligne")
+            return
+
+        t_debut = self.time_debut.time()
+        t_fin = self.time_fin.time()
+
+        minutes_debut = t_debut.hour() * 60 + t_debut.minute()
+        minutes_fin = t_fin.hour() * 60 + t_fin.minute()
+
+        if minutes_fin <= minutes_debut:
+            QMessageBox.warning(self, "Attention", "L'heure de fin doit être après l'heure de début")
+            return
+
+        self.accept()
+
+    def get_voyage_data(self):
+        """Retourne les données du voyage"""
+        t_debut = self.time_debut.time()
+        t_fin = self.time_fin.time()
+
+        return {
+            'num_ligne': self.edit_ligne.text().strip(),
+            'num_voyage': self.edit_voyage.text().strip(),
+            'heure_debut_str': t_debut.toString("HH:mm"),
+            'heure_fin_str': t_fin.toString("HH:mm"),
+            'hdebut': t_debut.hour() * 60 + t_debut.minute(),
+            'hfin': t_fin.hour() * 60 + t_fin.minute(),
+            'arret_debut': self.edit_depart.text().strip(),
+            'arret_fin': self.edit_arrivee.text().strip(),
+            'js_srv': self.edit_js_srv.text().strip()
+        }
 # ==================== DIALOGUE AJOUT SERVICE ====================
 
 class DialogAjoutService(QDialog):
