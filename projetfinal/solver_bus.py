@@ -1,16 +1,14 @@
 from objet import voyage
 import random
 
-PAUSE_MIN = 5
 
-
-def optimiser_services(voyages_list, services_list, max_solutions=5):
+def optimiser_services(voyages_list, services_list, max_solutions=5, pause_min=5):  # ✅ Ajouter pause_min
     """
     Algorithme glouton générant plusieurs solutions
     SANS OR-Tools (stable et rapide)
     """
 
-    print(f"🔧 Début optimisation glouton")
+    print(f"🔧 Début optimisation glouton (pause_min = {pause_min} min)")
     print(f"   Voyages: {len(voyages_list)}")
     print(f"   Services: {len(services_list)}")
 
@@ -36,7 +34,8 @@ def optimiser_services(voyages_list, services_list, max_solutions=5):
             voyages_list,
             services_list,
             strat_tri,
-            strat_nom
+            strat_nom,
+            pause_min  # ✅ Passer pause_min
         )
 
         if solution:
@@ -46,7 +45,7 @@ def optimiser_services(voyages_list, services_list, max_solutions=5):
     return solutions
 
 
-def generer_solution_gloutonne(voyages_list, services_list, tri_func, nom_strategie):
+def generer_solution_gloutonne(voyages_list, services_list, tri_func, nom_strategie, pause_min=5):
     """
     Génère UNE solution avec une stratégie de tri donnée
     """
@@ -113,8 +112,9 @@ def generer_solution_gloutonne(voyages_list, services_list, tri_func, nom_strate
             for v_existant in serv_info['voyages']:
                 v_exist = v_existant['voyage_obj']
 
-                if not (voy.hfin + PAUSE_MIN <= v_exist.hdebut or
-                        voy.hdebut >= v_exist.hfin + PAUSE_MIN):
+                # ✅ Utiliser pause_min au lieu de PAUSE_MIN
+                if not (voy.hfin + pause_min <= v_exist.hdebut or
+                        voy.hdebut >= v_exist.hfin + pause_min):
                     compatible = False
                     break
 
@@ -124,9 +124,9 @@ def generer_solution_gloutonne(voyages_list, services_list, tri_func, nom_strate
             # Calculer score (préférer services avec continuité géo)
             score = 0
 
-            # Voyages avant
+            # Voyages avant - ✅ Utiliser pause_min
             voyages_avant = [v for v in serv_info['voyages']
-                             if v['voyage_obj'].hfin + PAUSE_MIN <= voy.hdebut]
+                             if v['voyage_obj'].hfin + pause_min <= voy.hdebut]
 
             if voyages_avant:
                 dernier = max(voyages_avant, key=lambda v: v['voyage_obj'].hfin)
@@ -142,9 +142,9 @@ def generer_solution_gloutonne(voyages_list, services_list, tri_func, nom_strate
             else:
                 score += 10  # Premier voyage du service
 
-            # Voyages après
+            # Voyages après - ✅ Utiliser pause_min
             voyages_apres = [v for v in serv_info['voyages']
-                             if voy.hfin + PAUSE_MIN <= v['voyage_obj'].hdebut]
+                             if voy.hfin + pause_min <= v['voyage_obj'].hdebut]
 
             if voyages_apres:
                 prochain = min(voyages_apres, key=lambda v: v['voyage_obj'].hdebut)

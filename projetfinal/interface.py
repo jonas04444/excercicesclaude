@@ -27,7 +27,7 @@ HEURE_FIN = 24        # Heure de fin de la timeline
 HAUTEUR_SERVICE = 50  # Hauteur d'une ligne de service en pixels
 MARGE_GAUCHE = 100    # Marge pour les noms de services
 MARGE_HAUT = 40       # Marge pour les heures
-PAUSE_MIN = 5         # Pause minimum entre voyages (en minutes)
+pause_min = 5         # Pause minimum entre voyages (en minutes)
 
 
 # ==================== CLASSE VOYAGE GRAPHIQUE ====================
@@ -295,9 +295,10 @@ class TimelineView(QGraphicsView):
 class PanneauGauche(QFrame):
     """Panneau de gestion des voyages et services"""
 
-    def __init__(self, timeline, parent=None):
+    def __init__(self, timeline, main_window, parent=None):
         super().__init__(parent)
         self.timeline = timeline
+        self.main_window = main_window
         self.voyages_importes = []
 
         self.setFixedWidth(500)
@@ -421,7 +422,7 @@ class PanneauGauche(QFrame):
     def ajouter_hlp(self):
         """Ajoute un HLP au service sélectionné"""
         from objet import hlp, voyage
-
+        pause_min = self.main_window.get_pause_min()
         idx_service = self.combo_services.currentData()
         if idx_service is None or idx_service >= len(self.timeline.services):
             QMessageBox.warning(self, "Attention", "Sélectionnez un service")
@@ -731,6 +732,7 @@ class PanneauGauche(QFrame):
 
     def ajouter_voyage_au_service(self):
         try:
+            pause_min = self.main_window.get_pause_min()
             idx_service = self.combo_services.currentData()
             if idx_service is None or idx_service >= len(self.timeline.services):
                 QMessageBox.warning(self, "Attention", "Sélectionnez un service")
@@ -765,7 +767,7 @@ class PanneauGauche(QFrame):
                     return
 
             for v_exist in service.get_voyages():
-                if not (voy.hfin + PAUSE_MIN <= v_exist.hdebut or voy.hdebut >= v_exist.hfin + PAUSE_MIN):
+                if not (voy.hfin + pause_min <= v_exist.hdebut or voy.hdebut >= v_exist.hfin + pause_min):
                     QMessageBox.warning(self, "Chevauchement",
                                         f"Ce voyage chevauche {v_exist.num_ligne}-{v_exist.num_voyage}")
                     return
@@ -1632,6 +1634,32 @@ class MainWindow(QMainWindow):
         self.btn_optimiser.clicked.connect(self.optimiser_services)
         toolbar.addWidget(self.btn_optimiser)
 
+        # ===== NOUVEAU : CHAMP PAUSE MINIMUM =====
+        toolbar.addSpacing(20)  # Espacement
+
+        label_pause = QLabel("⏱️ Pause min:")
+        label_pause.setStyleSheet("font-weight: bold;")
+        toolbar.addWidget(label_pause)
+
+        from PyQt6.QtWidgets import QSpinBox
+        self.spin_pause_min = QSpinBox()
+        self.spin_pause_min.setRange(0, 60)  # Entre 0 et 60 minutes
+        self.spin_pause_min.setValue(5)  # Valeur par défaut
+        self.spin_pause_min.setSuffix(" min")
+        self.spin_pause_min.setToolTip("Pause minimum entre deux voyages consécutifs")
+        self.spin_pause_min.setStyleSheet("""
+            QSpinBox {
+                padding: 5px;
+                font-weight: bold;
+                background-color: #fff3cd;
+                border: 2px solid #f39c12;
+                border-radius: 4px;
+            }
+        """)
+        self.spin_pause_min.setFixedWidth(80)
+        toolbar.addWidget(self.spin_pause_min)
+        # ===== FIN NOUVEAU =====
+
         toolbar.addStretch()
 
         self.label_info = QLabel("Bienvenue ! Importez des voyages et créez des services.")
@@ -1645,7 +1673,7 @@ class MainWindow(QMainWindow):
         self.timeline = TimelineView()
         self.timeline.voyage_selectionne.connect(self.on_voyage_selected)
 
-        self.panneau_gauche = PanneauGauche(self.timeline)
+        self.panneau_gauche = PanneauGauche(self.timeline, self)
         content.addWidget(self.panneau_gauche)
 
         content.addWidget(self.timeline, stretch=1)
@@ -1655,11 +1683,17 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(content)
 
+    def get_pause_min(self):
+        """Retourne la valeur actuelle de PAUSE_MIN"""
+        return self.spin_pause_min.value()
+
     def optimiser_services(self):
         """Lance l'optimisation des services"""
         from solver_bus import optimiser_services
 
-        print("🚀 Début optimisation")
+        pause_min = self.get_pause_min()
+
+        print(f"🚀 Début optimisation (pause_min = {pause_min} min)")
 
         # Vérifications
         if not self.panneau_gauche.voyages_importes:
@@ -1690,7 +1724,7 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()  # Forcer l'affichage
 
         try:
-            solutions = optimiser_services(voyages_list, services_data, max_solutions=5)
+            solutions = optimiser_services(voyages_list, services_data, max_solutions=5, pause_min=pause_min)
 
             print(f"✅ Nombre de solutions trouvées : {len(solutions)}")
 
