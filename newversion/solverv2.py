@@ -163,7 +163,9 @@ def calculer_bonus_continuite_avant(voyage_obj, voyages_service, pause_min):
     dernier = max(voyages_avant, key=lambda v: v['voyage_obj'].hfin)
 
     try:
-        if dernier['voyage_obj'].arret_fin_id() == voyage_obj.arret_debut_id():
+        arret_fin = str(dernier['voyage_obj'].arret_fin_id())[:3]
+        arret_debut = str(voyage_obj.arret_debut_id())[:3]
+        if arret_fin == arret_debut:
             score += 100
     except Exception as e:
         logger.debug(f"Impossible de vérifier continuité avant: {e}")
