@@ -1,664 +1,361 @@
 """
-Solver optimisé pour l'assignation de voyages à des services
-Utilise un algorithme glouton avec plusieurs stratégies et amélioration locale
+Module d'optimisation des services de transport.
+Utilise un algorithme glouton pour assigner des voyages à des services.
 """
 
 from objetv2 import voyage
-import random
-from bisect import bisect_left, bisect_right
-from typing import List, Dict, Tuple, Any, Optional
-import time
+from logger import get_logger
+
+# Logger pour ce module
+logger = get_logger(__name__)
 
 
 # =============================================================================
-# CONSTANTES
+# STRATÉGIES DE TRI
 # =============================================================================
 
-PAUSE_MIN = 5  # Minutes de pause minimale entre voyages
+STRATEGIES_TRI = [
+    ("Par heure de début", lambda v: v['voyage'].hdebut),
+    ("Par durée", lambda v: v['voyage'].hfin - v['voyage'].hdebut),
+    ("Par heure de fin", lambda v: v['voyage'].hfin),
+    ("Par ligne puis heure", lambda v: (v['voyage'].num_ligne, v['voyage'].hdebut)),
+    ("Ordre inversé", lambda v: -v['voyage'].hdebut),
+]
 
 
 # =============================================================================
-# CLASSES UTILITAIRES
+# PRÉPARATION DES DONNÉES
 # =============================================================================
 
-class CacheGeo:
-    """Cache pour les vérifications de continuité géographique"""
+def preparer_services(services_list):
+    """Transforme la liste de services en structure exploitable."""
+    logger.debug(f"Préparation de {len(services_list)} services")
 
-    def __init__(self):
-        self.cache = {}
-        self.hits = 0
-        self.misses = 0
+    services_info = []
 
-    def sont_consecutifs(self, voyage1, voyage2):
-        """Vérifie si deux voyages sont géographiquement consécutifs"""
-        key = (id(voyage1), id(voyage2))
+    for idx, (service, indices_assignes) in enumerate(services_list):
+        services_info.append({
+            'id': idx,
+            'service_original': service,
+            'debut': service.heure_debut,
+            'fin': service.heure_fin,
+            'voyages_assignes': list(indices_assignes),
+            'voyages': []
+        })
 
-        if key in self.cache:
-            self.hits += 1
-            return self.cache[key]
-
-        self.misses += 1
-        try:
-            arret_fin = str(voyage1.arret_fin_id())
-            arret_debut = str(voyage2.arret_debut_id())
-
-            result = arret_fin[:3].upper() == arret_debut[:3].upper()
-        except:
-            result = False
-
-        self.cache[key] = result
-        return result
-
-    def get_stats(self):
-        """Retourne les statistiques du cache"""
-        total = self.hits + self.misses
-        hit_rate = (self.hits / total * 100) if total > 0 else 0
-        return {
-            'hits': self.hits,
-            'misses': self.misses,
-            'hit_rate': hit_rate
-        }
+    return services_info
 
 
-class ServiceOptimise:
-    """Classe pour gérer un service avec indexation temporelle"""
+def preparer_voyages(voyages_list):
+    """Transforme la liste de voyages en structure exploitable."""
+    logger.debug(f"Préparation de {len(voyages_list)} voyages")
 
-    def __init__(self, service_id, debut, fin, voyages_assignes=None):
-        self.id = service_id
-        self.debut = debut
-        self.fin = fin
-        self.voyages = []  # Liste triée par heure de début
-        self.voyages_assignes_fixes = voyages_assignes or []
+    return [
+        {'index': idx, 'voyage': voy, 'assigne': False}
+        for idx, voy in enumerate(voyages_list)
+    ]
 
-    def peut_ajouter_rapide(self, voyage):
-        """
-        Vérification O(log n) si un voyage peut être ajouté
-        Utilise la recherche dichotomique
-        """
-        if voyage.hdebut < self.debut or voyage.hfin > self.fin:
-            return False
 
-        if not self.voyages:
+def preassigner_voyages_fixes(services_info, voyages_info):
+    """Assigne les voyages déjà fixés à leurs services respectifs."""
+    nb_preassignes = 0
+
+    for serv in services_info:
+        for v_idx in serv['voyages_assignes']:
+            if v_idx < len(voyages_info):
+                voy_info = voyages_info[v_idx]
+                serv['voyages'].append({
+                    'index': v_idx,
+                    'voyage_obj': voy_info['voyage'],
+                    'fixe': True
+                })
+                voy_info['assigne'] = True
+                nb_preassignes += 1
+            else:
+                logger.warning(f"Index voyage invalide: {v_idx} (max: {len(voyages_info) - 1})")
+
+    logger.debug(f"{nb_preassignes} voyages pré-assignés")
+
+
+def trier_voyages_non_assignes(voyages_info, tri_func):
+    """Filtre et trie les voyages non encore assignés."""
+    voyages_non_assignes = [v for v in voyages_info if not v['assigne']]
+
+    try:
+        voyages_non_assignes.sort(key=tri_func)
+    except Exception as e:
+        logger.warning(f"Erreur tri personnalisé, fallback sur hdebut: {e}")
+        voyages_non_assignes.sort(key=lambda v: v['voyage'].hdebut)
+
+    logger.debug(f"{len(voyages_non_assignes)} voyages à assigner")
+    return voyages_non_assignes
+
+
+# =============================================================================
+# VÉRIFICATIONS DE COMPATIBILITÉ
+# =============================================================================
+
+def est_dans_plage_horaire(voyage_obj, service_info):
+    """Vérifie si un voyage est dans la plage horaire du service."""
+    return (voyage_obj.hdebut >= service_info['debut'] and
+            voyage_obj.hfin <= service_info['fin'])
+
+
+def est_pendant_pause(voyage_obj, service_info):
+    """Vérifie si un voyage tombe pendant une pause du service."""
+    service_original = service_info['service_original']
+
+    try:
+        if hasattr(service_original, 'pauses'):
+            return service_original.est_dans_pause(voyage_obj.hdebut, voyage_obj.hfin)
+    except Exception as e:
+        logger.error(f"Erreur vérification pause: {e}")
+
+    return False
+
+
+def a_chevauchement(voyage_obj, voyages_existants, pause_min):
+    """Vérifie si un voyage chevauche des voyages existants."""
+    for v_existant in voyages_existants:
+        v_exist = v_existant['voyage_obj']
+
+        fin_nouveau_avec_pause = voyage_obj.hfin + pause_min
+        fin_existant_avec_pause = v_exist.hfin + pause_min
+
+        pas_de_chevauchement = (fin_nouveau_avec_pause <= v_exist.hdebut or
+                                voyage_obj.hdebut >= fin_existant_avec_pause)
+
+        if not pas_de_chevauchement:
             return True
 
-        # Trouver la position d'insertion
-        pos = bisect_left(self.voyages, voyage.hdebut,
-                         key=lambda v: v['voyage_obj'].hdebut)
+    return False
 
-        # Vérifier le voyage précédent
-        if pos > 0:
-            precedent = self.voyages[pos - 1]['voyage_obj']
-            if precedent.hfin + PAUSE_MIN > voyage.hdebut:
-                return False
 
-        # Vérifier le voyage suivant
-        if pos < len(self.voyages):
-            suivant = self.voyages[pos]['voyage_obj']
-            if voyage.hfin + PAUSE_MIN > suivant.hdebut:
-                return False
+def est_service_compatible(voyage_obj, service_info, pause_min):
+    """Vérifie toutes les conditions de compatibilité."""
+    if not est_dans_plage_horaire(voyage_obj, service_info):
+        return False
 
-        return True
+    if est_pendant_pause(voyage_obj, service_info):
+        return False
 
-    def ajouter_voyage(self, voyage_info):
-        """Ajoute un voyage en maintenant l'ordre trié"""
-        pos = bisect_left(self.voyages, voyage_info['voyage_obj'].hdebut,
-                         key=lambda v: v['voyage_obj'].hdebut)
-        self.voyages.insert(pos, voyage_info)
+    if a_chevauchement(voyage_obj, service_info['voyages'], pause_min):
+        return False
 
-    def get_voyages_avant(self, voyage):
-        """Retourne les voyages qui finissent avant ce voyage"""
-        return [v for v in self.voyages
-                if v['voyage_obj'].hfin + PAUSE_MIN <= voyage.hdebut]
-
-    def get_voyages_apres(self, voyage):
-        """Retourne les voyages qui commencent après ce voyage"""
-        return [v for v in self.voyages
-                if voyage.hfin + PAUSE_MIN <= v['voyage_obj'].hdebut]
+    return True
 
 
 # =============================================================================
-# FONCTIONS DE CALCUL DE SCORES ET STRATÉGIES
+# CALCUL DU SCORE D'ASSIGNATION
 # =============================================================================
 
-def calculer_densite(voyage_info, tous_voyages):
-    """
-    Calcule la densité de voyages autour d'un créneau horaire
-    Plus il y a de voyages proches, plus la densité est élevée
-    """
-    v = voyage_info['voyage']
-    densite = 0
-    fenetre = 60  # minutes
+def calculer_bonus_continuite_avant(voyage_obj, voyages_service, pause_min):
+    """Calcule le bonus de continuité avec le voyage précédent."""
+    voyages_avant = [
+        v for v in voyages_service
+        if v['voyage_obj'].hfin + pause_min <= voyage_obj.hdebut
+    ]
 
-    for autre in tous_voyages:
-        autre_v = autre['voyage']
-        if autre_v == v:
-            continue
+    if not voyages_avant:
+        return 10
 
-        # Compter les voyages dans la fenêtre temporelle
-        if abs(autre_v.hdebut - v.hdebut) <= fenetre:
-            densite += 1
-
-    return -densite  # Négatif pour trier par densité décroissante
-
-
-def calculer_criticite(voyage_info, services_info):
-    """
-    Calcule la criticité d'un voyage
-    Plus un voyage est difficile à caser, plus il est critique
-    """
-    v = voyage_info['voyage']
-
-    # Compter combien de services peuvent potentiellement accueillir ce voyage
-    nb_services_compatibles = 0
-    for serv in services_info:
-        if serv.debut <= v.hdebut and serv.fin >= v.hfin:
-            nb_services_compatibles += 1
-
-    # Plus le nombre est petit, plus c'est critique
-    return nb_services_compatibles
-
-
-def calculer_potentiel_chaine(voyage_info, tous_voyages, cache_geo):
-    """
-    Calcule le potentiel de chaînage géographique d'un voyage
-    """
-    v = voyage_info['voyage']
     score = 0
+    dernier = max(voyages_avant, key=lambda v: v['voyage_obj'].hfin)
 
-    for autre in tous_voyages:
-        autre_v = autre['voyage']
-        if autre_v == v:
-            continue
+    try:
+        if dernier['voyage_obj'].arret_fin_id() == voyage_obj.arret_debut_id():
+            score += 100
+    except Exception as e:
+        logger.debug(f"Impossible de vérifier continuité avant: {e}")
 
-        # Vérifier continuité géographique
-        if cache_geo.sont_consecutifs(v, autre_v):
-            score += 1
-        if cache_geo.sont_consecutifs(autre_v, v):
-            score += 1
+    temps_attente = voyage_obj.hdebut - dernier['voyage_obj'].hfin
+    score += max(0, 50 - temps_attente)
 
-    return -score  # Négatif pour trier par potentiel décroissant
+    return score
 
 
-def calculer_score_intelligent(voyage, service_opt, cache_geo, service_original=None):
-    """
-    Calcule un score multicritère pour l'assignation d'un voyage à un service
-    """
+def calculer_bonus_continuite_apres(voyage_obj, voyages_service, pause_min):
+    """Calcule le bonus de continuité avec le voyage suivant."""
+    voyages_apres = [
+        v for v in voyages_service
+        if voyage_obj.hfin + pause_min <= v['voyage_obj'].hdebut
+    ]
+
+    if not voyages_apres:
+        return 0
+
+    prochain = min(voyages_apres, key=lambda v: v['voyage_obj'].hdebut)
+
+    try:
+        if voyage_obj.arret_fin_id() == prochain['voyage_obj'].arret_debut_id():
+            return 100
+    except Exception as e:
+        logger.debug(f"Impossible de vérifier continuité après: {e}")
+
+    return 0
+
+
+def calculer_score_assignation(voyage_obj, service_info, pause_min):
+    """Calcule le score total pour assigner un voyage à un service."""
+    voyages_service = service_info['voyages']
+
     score = 0
-
-    # Poids des différents critères
-    poids = {
-        'continuite_geo': 150,
-        'proximite_temp': 50,
-        'equilibrage': 10,
-        'premier_voyage': 20,
-        'ligne_commune': 30
-    }
-
-    # 1. Continuité géographique
-    voyages_avant = service_opt.get_voyages_avant(voyage)
-    if voyages_avant:
-        dernier = max(voyages_avant, key=lambda v: v['voyage_obj'].hfin)
-        if cache_geo.sont_consecutifs(dernier['voyage_obj'], voyage):
-            score += poids['continuite_geo']
-
-        # Bonus proximité temporelle
-        temps_attente = voyage.hdebut - dernier['voyage_obj'].hfin
-        if temps_attente <= 30:
-            score += max(0, poids['proximite_temp'] - temps_attente)
-    else:
-        # Premier voyage du service
-        score += poids['premier_voyage']
-
-    voyages_apres = service_opt.get_voyages_apres(voyage)
-    if voyages_apres:
-        prochain = min(voyages_apres, key=lambda v: v['voyage_obj'].hdebut)
-        if cache_geo.sont_consecutifs(voyage, prochain['voyage_obj']):
-            score += poids['continuite_geo']
-
-    # 2. Équilibrage - pénalité si le service a déjà beaucoup de voyages
-    score -= len(service_opt.voyages) * poids['equilibrage']
-
-    # 3. Bonus si même ligne
-    if service_opt.voyages:
-        try:
-            if any(v['voyage_obj'].num_ligne == voyage.num_ligne
-                   for v in service_opt.voyages):
-                score += poids['ligne_commune']
-        except:
-            pass
+    score += calculer_bonus_continuite_avant(voyage_obj, voyages_service, pause_min)
+    score += calculer_bonus_continuite_apres(voyage_obj, voyages_service, pause_min)
+    score -= len(voyages_service) * 5
 
     return score
 
 
 # =============================================================================
-# CLASSE PRINCIPALE DU SOLVER
+# ALGORITHME GLOUTON
 # =============================================================================
 
-class SolverOptimise:
-    """Solver principal avec toutes les optimisations"""
+def trouver_meilleur_service(voyage_obj, services_info, pause_min):
+    """Trouve le meilleur service pour un voyage donné."""
+    meilleur_service = None
+    meilleur_score = -1
 
-    def __init__(self, voyages_list, services_list):
-        self.voyages_originaux = voyages_list
-        self.services_originaux = services_list
-        self.cache_geo = CacheGeo()
-        self.stats = {
-            'temps_total': 0,
-            'solutions_generees': 0,
-            'evaluations_score': 0
-        }
+    for service_info in services_info:
+        if not est_service_compatible(voyage_obj, service_info, pause_min):
+            continue
 
-        # Définir les stratégies de tri
-        self.strategies = [
-            ("Par heure de début", lambda v: v['voyage'].hdebut),
-            ("Par durée", lambda v: v['voyage'].hfin - v['voyage'].hdebut),
-            ("Par heure de fin", lambda v: v['voyage'].hfin),
-            ("Par ligne puis heure", lambda v: (v['voyage'].num_ligne, v['voyage'].hdebut)),
-            ("Ordre inversé", lambda v: -v['voyage'].hdebut),
-            ("Une ligne par service", lambda v: (v['voyage'].num_ligne, v['voyage'].hdebut)),  # 6ème stratégie
-        ]
+        score = calculer_score_assignation(voyage_obj, service_info, pause_min)
 
-    def initialiser_services(self):
-        """Initialise les services optimisés"""
-        services_opt = []
+        if score > meilleur_score:
+            meilleur_score = score
+            meilleur_service = service_info
 
-        for idx, (service, indices_assignes) in enumerate(self.services_originaux):
-            service_opt = ServiceOptimise(
-                service_id=idx,
-                debut=service.heure_debut,
-                fin=service.heure_fin,
-                voyages_assignes=list(indices_assignes)
-            )
-            services_opt.append((service_opt, service))
+    return meilleur_service
 
-        return services_opt
 
-    def initialiser_voyages(self):
-        """Prépare la liste des voyages avec métadonnées"""
-        voyages_avec_index = []
+def assigner_voyage(voy_info, service_info):
+    """Assigne un voyage à un service."""
+    service_info['voyages'].append({
+        'index': voy_info['index'],
+        'voyage_obj': voy_info['voyage'],
+        'fixe': False
+    })
+    voy_info['assigne'] = True
 
-        for idx, voy in enumerate(self.voyages_originaux):
-            voyages_avec_index.append({
-                'index': idx,
-                'voyage': voy,
-                'assigne': False
-            })
+    logger.debug(f"Voyage {voy_info['index']} → service {service_info['id']}")
 
-        return voyages_avec_index
 
-    def pre_assigner_voyages_fixes(self, services_opt, voyages_info):
-        """Pré-assigne les voyages déjà fixés"""
-        for service_opt, service_orig in services_opt:
-            for v_idx in service_opt.voyages_assignes_fixes:
-                if v_idx < len(voyages_info):
-                    voy_info = voyages_info[v_idx]
+def executer_algorithme_glouton(voyages_non_assignes, services_info, pause_min):
+    """Exécute l'algorithme glouton pour assigner les voyages."""
+    nb_non_assignes = 0
 
-                    voyage_dict = {
-                        'index': v_idx,
-                        'voyage_obj': voy_info['voyage'],
-                        'fixe': True
-                    }
-
-                    service_opt.ajouter_voyage(voyage_dict)
-                    voy_info['assigne'] = True
-
-    def generer_solution(self, strategie_nom, tri_func, amelioration_locale=False):
-        """
-        Génère une solution avec la stratégie donnée
-        """
-        start_time = time.time()
-
-        # Déterminer si on applique la contrainte "une ligne par service"
-        contrainte_ligne_unique = (strategie_nom == "Une ligne par service")
-
-        # Initialisation
-        services_opt = self.initialiser_services()
-        voyages_info = self.initialiser_voyages()
-
-        # Pré-assigner les voyages fixes
-        self.pre_assigner_voyages_fixes(services_opt, voyages_info)
-
-        # Obtenir les voyages non assignés et les trier
-        voyages_non_assignes = [v for v in voyages_info if not v['assigne']]
+    for voy_info in voyages_non_assignes:
+        voyage_obj = voy_info['voyage']
 
         try:
-            voyages_non_assignes.sort(key=tri_func)
-        except Exception as e:
-            print(f"⚠️  Erreur tri ({strategie_nom}): {e}")
-            voyages_non_assignes.sort(key=lambda v: v['voyage'].hdebut)
+            meilleur_service = trouver_meilleur_service(voyage_obj, services_info, pause_min)
 
-        # Algorithme glouton optimisé
-        nb_non_assignes = 0
-
-        for voy_info in voyages_non_assignes:
-            voy = voy_info['voyage']
-            v_idx = voy_info['index']
-
-            # Chercher le meilleur service
-            meilleur_service = None
-            meilleur_score = -float('inf')
-
-            for service_opt, service_orig in services_opt:
-                # Vérification rapide de compatibilité
-                if not service_opt.peut_ajouter_rapide(voy):
-                    continue
-
-                # Vérifier les pauses
-                if hasattr(service_orig, 'pauses') and service_orig.est_dans_pause(voy.hdebut, voy.hfin):
-                    continue
-
-                # NOUVELLE CONTRAINTE : Vérifier si une seule ligne par service
-                if contrainte_ligne_unique and service_opt.voyages:
-                    # Vérifier que tous les voyages du service sont de la même ligne
-                    try:
-                        ligne_service = service_opt.voyages[0]['voyage_obj'].num_ligne
-                        if voy.num_ligne != ligne_service:
-                            continue
-                    except:
-                        pass  # Si pas de num_ligne, continuer normalement
-
-                # Calculer le score
-                score = calculer_score_intelligent(voy, service_opt, self.cache_geo, service_orig)
-                self.stats['evaluations_score'] += 1
-
-                if score > meilleur_score:
-                    meilleur_score = score
-                    meilleur_service = service_opt
-
-            # Assigner au meilleur service
             if meilleur_service:
-                voyage_dict = {
-                    'index': v_idx,
-                    'voyage_obj': voy,
-                    'fixe': False
-                }
-                meilleur_service.ajouter_voyage(voyage_dict)
-                voy_info['assigne'] = True
+                assigner_voyage(voy_info, meilleur_service)
             else:
                 nb_non_assignes += 1
+                logger.debug(f"Voyage {voy_info['index']} non assignable")
 
-        # Créer la solution finale
-        solution = {
-            "services": {},
-            "strategie": strategie_nom,
-            "nb_non_assignes": nb_non_assignes,
-            "temps_generation": time.time() - start_time
-        }
+        except Exception as e:
+            nb_non_assignes += 1
+            logger.error(f"Erreur assignation voyage {voy_info['index']}: {e}", exc_info=True)
 
-        for service_opt, _ in services_opt:
-            solution["services"][service_opt.id] = service_opt.voyages
-
-        # Amélioration locale si demandée
-        if amelioration_locale:
-            solution = ameliorer_solution_locale(solution, services_opt, self.cache_geo)
-
-        total_assignes = sum(len(voyages) for voyages in solution["services"].values())
-        print(f"   ✓ {strategie_nom}: {total_assignes}/{len(self.voyages_originaux)} assignés "
-              f"({nb_non_assignes} non assignés) - {solution['temps_generation']:.3f}s")
-
-        self.stats['solutions_generees'] += 1
-
-        return solution
-
-    def optimiser(self, max_solutions=5, amelioration_locale=False):
-        """
-        Génère plusieurs solutions et retourne les meilleures
-        """
-        print(f"🔧 Début optimisation (Solver Optimisé)")
-        print(f"   Voyages: {len(self.voyages_originaux)}")
-        print(f"   Services: {len(self.services_originaux)}")
-
-        if not self.voyages_originaux or not self.services_originaux:
-            print("❌ Pas de voyages ou services")
-            return []
-
-        start_time = time.time()
-        solutions = []
-
-        # Générer les solutions avec différentes stratégies
-        for strat_nom, strat_tri in self.strategies[:max_solutions]:
-            print(f"\n🎯 Génération solution: {strat_nom}...")
-
-            solution = self.generer_solution(strat_nom, strat_tri, amelioration_locale)
-
-            if solution:
-                solutions.append(solution)
-
-        self.stats['temps_total'] = time.time() - start_time
-
-        # Afficher les statistiques
-        print(f"\n📊 Statistiques:")
-        print(f"   Solutions générées: {len(solutions)}")
-        print(f"   Temps total: {self.stats['temps_total']:.3f}s")
-        print(f"   Évaluations de score: {self.stats['evaluations_score']}")
-
-        cache_stats = self.cache_geo.get_stats()
-        print(f"   Cache géo - Hit rate: {cache_stats['hit_rate']:.1f}% "
-              f"({cache_stats['hits']}/{cache_stats['hits'] + cache_stats['misses']})")
-
-        print(f"\n✅ {len(solutions)} solution(s) générée(s)")
-
-        return solutions
+    return nb_non_assignes
 
 
 # =============================================================================
-# FONCTIONS D'AMÉLIORATION LOCALE
+# CONSTRUCTION DE LA SOLUTION
 # =============================================================================
 
-def peut_echanger_voyages(v1, v2, service1_voyages, service2_voyages):
-    """
-    Vérifie si deux voyages peuvent être échangés entre services
-    sans créer de conflits
-    """
-    # Créer des copies temporaires
-    temp_s1 = [v for v in service1_voyages if v['index'] != v1['index']]
-    temp_s1.append(v2)
-
-    temp_s2 = [v for v in service2_voyages if v['index'] != v2['index']]
-    temp_s2.append(v1)
-
-    # Vérifier les conflits dans service1
-    for i, voy_a in enumerate(temp_s1):
-        for voy_b in temp_s1[i+1:]:
-            if not (voy_a['voyage_obj'].hfin + PAUSE_MIN <= voy_b['voyage_obj'].hdebut or
-                    voy_b['voyage_obj'].hfin + PAUSE_MIN <= voy_a['voyage_obj'].hdebut):
-                return False
-
-    # Vérifier les conflits dans service2
-    for i, voy_a in enumerate(temp_s2):
-        for voy_b in temp_s2[i+1:]:
-            if not (voy_a['voyage_obj'].hfin + PAUSE_MIN <= voy_b['voyage_obj'].hdebut or
-                    voy_b['voyage_obj'].hfin + PAUSE_MIN <= voy_a['voyage_obj'].hdebut):
-                return False
-
-    return True
+def trier_voyages_par_service(services_info):
+    """Trie les voyages de chaque service par heure de début."""
+    for serv in services_info:
+        serv['voyages'].sort(key=lambda v: v['voyage_obj'].hdebut)
 
 
-def ameliorer_solution_locale(solution, services_opt, cache_geo, max_iterations=50):
-    """
-    Améliore une solution par recherche locale
-    Essaie d'échanger des voyages entre services pour améliorer la continuité
-    """
-    print("   🔄 Amélioration locale...")
-    start_time = time.time()
+def construire_solution(services_info, nom_strategie, nb_non_assignes):
+    """Construit l'objet solution final."""
+    solution = {
+        "services": {},
+        "strategie": nom_strategie,
+        "nb_non_assignes": nb_non_assignes
+    }
 
-    ameliore = True
-    iteration = 0
-    nb_echanges = 0
-
-    while ameliore and iteration < max_iterations:
-        ameliore = False
-        iteration += 1
-
-        services_ids = list(solution['services'].keys())
-
-        for i, s1_id in enumerate(services_ids):
-            for s2_id in services_ids[i+1:]:
-                voyages_s1 = solution['services'][s1_id]
-                voyages_s2 = solution['services'][s2_id]
-
-                if not voyages_s1 or not voyages_s2:
-                    continue
-
-                # Essayer d'échanger des voyages pour améliorer la continuité
-                for v1 in voyages_s1:
-                    if v1.get('fixe', False):
-                        continue
-
-                    for v2 in voyages_s2:
-                        if v2.get('fixe', False):
-                            continue
-
-                        # Calculer score avant échange
-                        score_avant = 0
-                        if cache_geo.sont_consecutifs(v1['voyage_obj'], v2['voyage_obj']):
-                            score_avant -= 100
-
-                        # Vérifier si l'échange améliore la continuité
-                        score_apres = 0
-                        # (logique simplifiée ici)
-
-                        if score_apres > score_avant:
-                            if peut_echanger_voyages(v1, v2, voyages_s1, voyages_s2):
-                                # Effectuer l'échange
-                                voyages_s1.remove(v1)
-                                voyages_s2.remove(v2)
-                                voyages_s1.append(v2)
-                                voyages_s2.append(v1)
-
-                                # Retrier
-                                voyages_s1.sort(key=lambda v: v['voyage_obj'].hdebut)
-                                voyages_s2.sort(key=lambda v: v['voyage_obj'].hdebut)
-
-                                ameliore = True
-                                nb_echanges += 1
-                                break
-
-                    if ameliore:
-                        break
-
-                if ameliore:
-                    break
-
-            if ameliore:
-                break
-
-    temps = time.time() - start_time
-    print(f"      {nb_echanges} échange(s) en {iteration} itération(s) - {temps:.3f}s")
+    for serv in services_info:
+        solution["services"][serv['id']] = serv['voyages']
 
     return solution
 
 
-def analyser_solution(solution, voyages_list):
-    """
-    Analyse une solution et retourne des métriques détaillées
-    """
-    total_voyages = len(voyages_list)
-    total_assignes = sum(len(voyages) for voyages in solution['services'].values())
-
-    taux_assignation = (total_assignes / total_voyages * 100) if total_voyages > 0 else 0
-
-    # Calculer la continuité géographique
-    nb_continuite = 0
-    nb_transitions = 0
-
-    for voyages in solution['services'].values():
-        for i in range(len(voyages) - 1):
-            nb_transitions += 1
-            try:
-                if voyages[i]['voyage_obj'].arret_fin_id() == voyages[i+1]['voyage_obj'].arret_debut_id():
-                    nb_continuite += 1
-            except:
-                pass
-
-    taux_continuite = (nb_continuite / nb_transitions * 100) if nb_transitions > 0 else 0
-
-    # Équilibrage
-    nb_voyages_par_service = [len(v) for v in solution['services'].values()]
-    equilibrage = max(nb_voyages_par_service) - min(nb_voyages_par_service) if nb_voyages_par_service else 0
-
-    # Analyser les lignes par service
-    nb_lignes_par_service = []
-    respect_ligne_unique = True
-
-    for voyages in solution['services'].values():
-        if voyages:
-            try:
-                lignes = set(v['voyage_obj'].num_ligne for v in voyages)
-                nb_lignes_par_service.append(len(lignes))
-                if len(lignes) > 1:
-                    respect_ligne_unique = False
-            except:
-                pass
-
-    nb_services_multi_lignes = sum(1 for n in nb_lignes_par_service if n > 1)
-
-    return {
-        'taux_assignation': taux_assignation,
-        'nb_assignes': total_assignes,
-        'nb_total': total_voyages,
-        'taux_continuite': taux_continuite,
-        'nb_continuite': nb_continuite,
-        'nb_transitions': nb_transitions,
-        'equilibrage': equilibrage,
-        'strategie': solution.get('strategie', 'Inconnue'),
-        'respect_ligne_unique': respect_ligne_unique,
-        'nb_services_multi_lignes': nb_services_multi_lignes,
-        'nb_lignes_par_service': nb_lignes_par_service
-    }
-
-
 # =============================================================================
-# FONCTION PRINCIPALE (Compatible avec l'ancien code)
+# FONCTIONS PRINCIPALES
 # =============================================================================
 
-def optimiser_services(voyages_list, services_list, max_solutions=6, amelioration_locale=False):
+def generer_solution_gloutonne(voyages_list, services_list, tri_func, nom_strategie, pause_min=5):
+    """Génère UNE solution avec une stratégie de tri donnée."""
+    logger.info(f"Génération solution: {nom_strategie}")
+
+    try:
+        services_info = preparer_services(services_list)
+        voyages_info = preparer_voyages(voyages_list)
+        preassigner_voyages_fixes(services_info, voyages_info)
+        voyages_non_assignes = trier_voyages_non_assignes(voyages_info, tri_func)
+
+        nb_non_assignes = executer_algorithme_glouton(
+            voyages_non_assignes, services_info, pause_min
+        )
+
+        trier_voyages_par_service(services_info)
+        solution = construire_solution(services_info, nom_strategie, nb_non_assignes)
+
+        total_assignes = sum(len(serv['voyages']) for serv in services_info)
+        logger.info(f"Résultat: {total_assignes}/{len(voyages_list)} assignés ({nb_non_assignes} échecs)")
+
+        return solution
+
+    except Exception as e:
+        logger.critical(f"Échec génération solution '{nom_strategie}': {e}", exc_info=True)
+        return None
+
+
+def optimiser_services(voyages_list, services_list, max_solutions=5, pause_min=5):
     """
-    Fonction principale d'optimisation (compatible avec l'ancienne interface)
+    Algorithme glouton générant plusieurs solutions.
 
     Args:
-        voyages_list: Liste des voyages à assigner
+        voyages_list: Liste des voyages à optimiser
         services_list: Liste des services disponibles
-        max_solutions: Nombre maximum de solutions à générer (défaut: 6)
-        amelioration_locale: Active l'amélioration locale (plus lent mais meilleur)
+        max_solutions: Nombre maximum de solutions à générer
+        pause_min: Temps minimum entre deux voyages (en minutes)
 
     Returns:
         Liste des solutions générées
     """
-    solver = SolverOptimise(voyages_list, services_list)
-    solutions = solver.optimiser(max_solutions, amelioration_locale)
+    logger.info("=" * 60)
+    logger.info("DÉBUT OPTIMISATION")
+    logger.info(f"Paramètres: pause_min={pause_min}, max_solutions={max_solutions}")
+    logger.info(f"Données: {len(voyages_list)} voyages, {len(services_list)} services")
 
-    # Afficher l'analyse de chaque solution
-    print("\n📈 Analyse des solutions:")
-    for i, sol in enumerate(solutions, 1):
-        metrics = analyser_solution(sol, voyages_list)
-        print(f"\n   Solution {i} - {metrics['strategie']}:")
-        print(f"      Assignation: {metrics['taux_assignation']:.1f}% ({metrics['nb_assignes']}/{metrics['nb_total']})")
-        print(f"      Continuité géo: {metrics['taux_continuite']:.1f}% ({metrics['nb_continuite']}/{metrics['nb_transitions']})")
-        print(f"      Équilibrage: {metrics['equilibrage']} voyages d'écart")
+    if not voyages_list or not services_list:
+        logger.error("Données manquantes: pas de voyages ou services")
+        return []
 
-        # Afficher les infos sur les lignes
-        if metrics['respect_ligne_unique']:
-            print(f"      Lignes: ✅ Une ligne par service")
+    solutions = []
+
+    for strat_idx, (strat_nom, strat_tri) in enumerate(STRATEGIES_TRI[:max_solutions]):
+        logger.info(f"--- Solution {strat_idx + 1}/{max_solutions} ---")
+
+        solution = generer_solution_gloutonne(
+            voyages_list, services_list, strat_tri, strat_nom, pause_min
+        )
+
+        if solution:
+            solutions.append(solution)
         else:
-            print(f"      Lignes: ⚠️  {metrics['nb_services_multi_lignes']} service(s) avec plusieurs lignes")
+            logger.warning(f"Solution {strat_idx + 1} non générée")
+
+    logger.info("=" * 60)
+    logger.info(f"FIN OPTIMISATION: {len(solutions)} solution(s) générée(s)")
 
     return solutions
-
-
-# =============================================================================
-# EXEMPLE D'UTILISATION
-# =============================================================================
-
-if __name__ == "__main__":
-    # Exemple d'utilisation
-    print("=" * 70)
-    print("SOLVER OPTIMISÉ - Assignation de voyages")
-    print("=" * 70)
-
-    # Remplacer par vos vraies données
-    # voyages = [...]  # Liste de vos objets voyage
-    # services = [...]  # Liste de vos services
-
-    # solutions = optimiser_services(voyages, services, max_solutions=5, amelioration_locale=True)
-
-    print("\n✅ Exemple de code prêt à l'emploi!")
