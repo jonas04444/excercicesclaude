@@ -283,9 +283,16 @@ nouveau_voyage = {
     "heure_depart": 480,     # En minutes (480 = 8h00, 840 = 14h00)
     "duree": 35              # Durée en minutes
 }
+nouveaux_voyages = [
+    {"ligne": "L1", "origine": "A", "destination": "B", "heure_depart": 480, "duree": 35},
+    {"ligne": "L2", "origine": "C", "destination": "D", "heure_depart": 600, "duree": 45},
+    {"ligne": "L3", "origine": "B", "destination": "A", "heure_depart": 900, "duree": 30},
+]
 
+# Et tu crées le DataFrame avec toute la liste :
+voyage_df = pd.DataFrame(nouveaux_voyages)
 # Préparation du voyage (même format que les données d'entraînement)
-voyage_df = pd.DataFrame([nouveau_voyage])
+#voyage_df = pd.DataFrame([nouveau_voyage])
 voyage_features = pd.get_dummies(voyage_df[["ligne", "origine", "destination"]])
 voyage_features["heure_depart"] = voyage_df["heure_depart"]
 voyage_features["duree"] = voyage_df["duree"]
