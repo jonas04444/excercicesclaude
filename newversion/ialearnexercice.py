@@ -277,7 +277,7 @@ print("=" * 50)
 # Modifie les valeurs ci-dessous pour tester différents scénarios :
 
 nouveau_voyage = {
-    "ligne": "L1",           # Essaie : L1, L2, L3
+    "ligne": "L4",           # Essaie : L1, L2, L3
     "origine": "A",          # Essaie : A, B, C, D
     "destination": "B",      # Essaie : A, B, C, D (différent de origine)
     "heure_depart": 480,     # En minutes (480 = 8h00, 840 = 14h00)
