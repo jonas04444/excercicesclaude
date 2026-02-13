@@ -288,6 +288,25 @@ def agreger_services(df_voyages):
     print(f"\n📊 Répartition par type de service :")
     print(df_services['type_service'].value_counts())
     
+    # Créer un graphique de distribution
+    plt.figure(figsize=(10, 6))
+    type_counts = df_services['type_service'].value_counts()
+    colors = ['#4472C4', '#ED7D31', '#A5A5A5', '#FFC000']
+    plt.bar(range(len(type_counts)), type_counts.values, color=colors[:len(type_counts)],
+            edgecolor='black', linewidth=1.5)
+    plt.xticks(range(len(type_counts)), type_counts.index, fontsize=11, fontweight='bold')
+    plt.ylabel('Nombre de services', fontsize=12, fontweight='bold')
+    plt.title('Distribution des Types de Services\n', fontsize=14, fontweight='bold', pad=20)
+    plt.grid(axis='y', alpha=0.3, linestyle='--')
+
+    # Ajouter les valeurs sur les barres
+    for i, v in enumerate(type_counts.values):
+        plt.text(i, v + 0.5, str(v), ha='center', va='bottom', fontsize=11, fontweight='bold')
+
+    plt.tight_layout()
+    plt.savefig('distribution_types_services.png', dpi=150, bbox_inches='tight')
+    print("\n✅ Graphique sauvegardé : distribution_types_services.png")
+
     return df_services
 
 
@@ -297,16 +316,16 @@ def generer_donnees_exemple():
     """Génère des données d'exemple pour tester le système"""
     np.random.seed(42)
     voyages = []
-    
+
     periodes = ["sem N-3", "mercredi", "sem p3", "samedi", "dimanche"]
     depots = ["DEPOT_A", "DEPOT_B"]
     lignes = ["L1", "L2", "L3"]
     sens_options = ["ALLER", "RETOUR"]
-    
+
     service_id = 1
     for _ in range(80):  # 80 services
         type_service = np.random.choice(["MATIN", "APREM", "COUPE_DEBUT", "COUPE_FIN"])
-        
+
         if type_service == "MATIN":
             heure_debut_service = np.random.randint(300, 420)  # 5h-7h
             heure_fin_service = np.random.randint(720, 840)    # 12h-14h
@@ -327,24 +346,24 @@ def generer_donnees_exemple():
             heure_fin_service = np.random.randint(1260, 1350)
             nb_voyages = np.random.randint(10, 16)
             coupure = np.random.randint(180, 300)
-        
+
         # Générer les voyages pour ce service
         duree_travail = (heure_fin_service - heure_debut_service) - coupure
         intervalle = duree_travail // nb_voyages if nb_voyages > 0 else 30
-        
+
         heure_actuelle = heure_debut_service
         moment_coupure = heure_debut_service + (duree_travail // 2) if coupure > 0 else None
         coupure_effectuee = False
-        
+
         for v in range(nb_voyages):
             # Gérer la coupure
             if coupure > 0 and not coupure_effectuee and heure_actuelle >= moment_coupure:
                 heure_actuelle += coupure
                 coupure_effectuee = True
-            
+
             duree_voyage = np.random.randint(25, 45)
             heure_fin_voyage = heure_actuelle + duree_voyage
-            
+
             voyages.append({
                 "periode": np.random.choice(periodes),
                 "depot": np.random.choice(depots),
@@ -359,11 +378,11 @@ def generer_donnees_exemple():
                 "num_voiture": f"BUS_{np.random.randint(100, 200)}",
                 "jours_semaine": "12345",
             })
-            
+
             heure_actuelle = heure_fin_voyage + np.random.randint(5, 15)
-        
+
         service_id += 1
-    
+
     return pd.DataFrame(voyages)
 
 
@@ -372,6 +391,17 @@ def generer_donnees_exemple():
 
 # Pour l'exemple, on génère des données
 df_voyages = generer_donnees_exemple()
+
+# IMPORTANT : Convertir les heures en minutes pour les données d'exemple
+df_voyages['heure_debut_min'] = df_voyages['heure_debut'].apply(heure_to_minutes)
+df_voyages['heure_fin_min'] = df_voyages['heure_fin'].apply(heure_to_minutes)
+
+# Nettoyer les données (supprimer les lignes avec heures invalides)
+df_voyages = df_voyages.dropna(subset=['num_service', 'heure_debut_min', 'heure_fin_min'])
+
+print(f"✅ {len(df_voyages)} voyages chargés")
+print(f"   {df_voyages['num_service'].nunique()} services uniques")
+print(f"   {df_voyages['num_ligne'].nunique()} lignes différentes")
 
 print(f"\n🔍 Aperçu des 10 premiers voyages :")
 print(df_voyages.head(10).to_string())
@@ -474,11 +504,49 @@ print(classification_report(y_test, predictions, zero_division=0))
 
 
 # =============================================
-# PARTIE 6 : IMPORTANCE DES FEATURES
+# PARTIE 6 : MATRICE DE CONFUSION
 # =============================================
 
 print("\n" + "=" * 100)
-print("🔍 PARTIE 5 : Importance des features")
+print("📊 PARTIE 5 : Matrice de confusion (visualisation)")
+print("=" * 100)
+
+cm = confusion_matrix(y_test, predictions, labels=modele.classes_)
+cm_df = pd.DataFrame(
+    cm,
+    index=[f"Vrai:\n{c}" for c in modele.classes_],
+    columns=[f"Prédit:\n{c}" for c in modele.classes_]
+)
+
+plt.figure(figsize=(12, 9))
+sns.heatmap(
+    cm_df,
+    annot=True,
+    fmt="d",
+    cmap="Blues",
+    cbar_kws={"label": "Nombre de services"},
+    linewidths=0.5,
+    linecolor='gray',
+    square=True
+)
+plt.title("Matrice de confusion — Classification des services bus\n", fontsize=16, fontweight="bold", pad=20)
+plt.ylabel("Type réel", fontsize=12, fontweight="bold")
+plt.xlabel("Type prédit", fontsize=12, fontweight="bold")
+plt.tight_layout()
+plt.savefig("confusion_matrix_services.png", dpi=150, bbox_inches='tight')
+print("✅ Graphique sauvegardé : confusion_matrix_services.png")
+print("\n💡 Ce graphique montre :")
+print("   • Diagonale = prédictions correctes (bleu foncé = bon)")
+print("   • Hors diagonale = erreurs de classification")
+print(f"   • Précision globale : {precision:.1%}")
+
+
+# =============================================
+# PARTIE 7 : IMPORTANCE DES FEATURES
+# =============================================
+
+print("\n" + "=" * 100)
+print("🔍 PARTIE 6 : Importance des features")
 print("=" * 100)
 
 importances = pd.DataFrame({
@@ -491,19 +559,34 @@ for i, row in importances.head(15).iterrows():
     barre = "█" * int(row['importance'] * 80)
     print(f"   {row['feature']:30s} : {row['importance']:.4f} {barre}")
 
+# Créer un graphique de l'importance des features
+plt.figure(figsize=(12, 8))
+top_features = importances.head(10)
+plt.barh(range(len(top_features)), top_features['importance'], color='steelblue', edgecolor='navy')
+plt.yticks(range(len(top_features)), top_features['feature'])
+plt.xlabel('Importance', fontsize=12, fontweight='bold')
+plt.title('Top 10 des Features les Plus Importantes\nClassification des Services Bus',
+          fontsize=14, fontweight='bold', pad=20)
+plt.gca().invert_yaxis()  # Plus important en haut
+plt.grid(axis='x', alpha=0.3, linestyle='--')
+plt.tight_layout()
+plt.savefig('importance_features.png', dpi=150, bbox_inches='tight')
+print("\n✅ Graphique sauvegardé : importance_features.png")
+print("\n💡 Ce graphique montre les caractéristiques les plus influentes pour la classification")
+
 
 # =============================================
-# PARTIE 7 : PRÉDICTION POUR NOUVEAUX SERVICES
+# PARTIE 8 : PRÉDICTION POUR NOUVEAUX SERVICES
 # =============================================
 
 print("\n\n" + "=" * 100)
-print("🔮 PARTIE 6 : Prédiction pour de nouveaux services")
+print("🔮 PARTIE 7 : Prédiction pour de nouveaux services")
 print("=" * 100)
 
 def predire_type_service_v2(voyages_list, depot="N/A", periode="N/A"):
     """
     Prédit le type de service à partir d'une liste de voyages.
-    
+
     Args:
         voyages_list: Liste de dict avec clés:
             - heure_debut: str ou int (ex: "6:30" ou 390)
@@ -511,7 +594,7 @@ def predire_type_service_v2(voyages_list, depot="N/A", periode="N/A"):
             - ligne: str (optionnel)
         depot: str
         periode: str
-    
+
     Returns:
         type_predit: str
         probabilites: dict
@@ -521,34 +604,34 @@ def predire_type_service_v2(voyages_list, depot="N/A", periode="N/A"):
     heures_debut = []
     heures_fin = []
     lignes = []
-    
+
     for voyage in voyages_list:
         h_deb = heure_to_minutes(voyage['heure_debut'])
         h_fin = heure_to_minutes(voyage['heure_fin'])
-        
+
         if h_deb is not None and h_fin is not None:
             heures_debut.append(h_deb)
             heures_fin.append(h_fin)
             if 'ligne' in voyage:
                 lignes.append(voyage['ligne'])
-    
+
     if not heures_debut:
         return None, {}, {"erreur": "Aucune heure valide"}
-    
+
     # Calculer les caractéristiques
     heure_debut_service = min(heures_debut)
     heure_fin_service = max(heures_fin)
     nb_voyages = len(voyages_list)
-    
+
     # Analyser les coupures
     a_coupure, duree_coupure, position_coupure = analyser_coupure(heures_debut, heures_fin)
-    
+
     duree_totale = heure_fin_service - heure_debut_service
     duree_travail = duree_totale - duree_coupure
-    
+
     ligne_principale = lignes[0] if lignes else "L1"
     nb_lignes = len(set(lignes)) if lignes else 1
-    
+
     # Créer le vecteur de features
     features_dict = {
         'heure_debut': heure_debut_service,
@@ -563,30 +646,30 @@ def predire_type_service_v2(voyages_list, depot="N/A", periode="N/A"):
         'est_soir': 1 if heure_fin_service > 1140 else 0,
         'voyages_par_heure': nb_voyages / (duree_travail / 60) if duree_travail > 0 else 0,
     }
-    
+
     # One-hot encoding pour depot et ligne
     for col in features.columns:
         if col.startswith('depot_') or col.startswith('ligne_'):
             features_dict[col] = 0
-    
+
     # Activer le bon depot et la bonne ligne
     depot_col = f"depot_{depot}"
     ligne_col = f"ligne_{ligne_principale}"
-    
+
     if depot_col in features_dict:
         features_dict[depot_col] = 1
     if ligne_col in features_dict:
         features_dict[ligne_col] = 1
-    
+
     # Créer le DataFrame
     service_features = pd.DataFrame([features_dict])
     service_features = service_features[features.columns]
-    
+
     # Prédiction
     type_predit = modele.predict(service_features)[0]
     probas = modele.predict_proba(service_features)[0]
     probas_dict = dict(zip(modele.classes_, probas))
-    
+
     details = {
         'heure_debut': minutes_to_heure(heure_debut_service),
         'heure_fin': minutes_to_heure(heure_fin_service),
@@ -595,7 +678,7 @@ def predire_type_service_v2(voyages_list, depot="N/A", periode="N/A"):
         'duree_coupure': f"{duree_coupure//60}h{duree_coupure%60:02d}" if duree_coupure > 0 else "Aucune",
         'a_coupure': a_coupure,
     }
-    
+
     return type_predit, probas_dict, details
 
 
@@ -656,19 +739,19 @@ for i, exemple in enumerate(exemples, 1):
     print(f"{'─'*100}")
     print(f"🚌 Exemple {i} : {exemple['nom']}")
     print(f"{'─'*100}")
-    
+
     type_p, probas, details = predire_type_service_v2(
         exemple['voyages'],
         depot=exemple['depot']
     )
-    
+
     print(f"   📍 Dépôt : {exemple['depot']}")
     print(f"   📅 Horaire : {details['heure_debut']} → {details['heure_fin']}")
     print(f"   🚍 Nombre de voyages : {details['nb_voyages']}")
     print(f"   ⏱️  Durée totale : {details['duree_totale']}")
     if details['a_coupure']:
         print(f"   ⚠️  Coupure détectée : {details['duree_coupure']}")
-    
+
     print(f"\n   🎯 Type prédit : {type_p} (confiance : {max(probas.values()):.1%})")
     print(f"\n   📊 Probabilités détaillées :")
     for type_s, proba in sorted(probas.items(), key=lambda x: -x[1]):
@@ -682,7 +765,7 @@ for i, exemple in enumerate(exemples, 1):
 # =============================================
 
 print("\n" + "=" * 100)
-print("💾 PARTIE 7 : Sauvegarde du modèle")
+print("💾 PARTIE 8 : Sauvegarde du modèle")
 print("=" * 100)
 
 import pickle
@@ -706,6 +789,118 @@ print("""
 
 
 # =============================================
+# PARTIE 9 : COURBE D'APPRENTISSAGE
+# =============================================
+
+print("\n\n" + "=" * 100)
+print("📉 PARTIE 9 : Courbe d'apprentissage (Learning Curve)")
+print("=" * 100)
+print("\n⏳ Calcul en cours (peut prendre quelques secondes)...")
+
+from sklearn.model_selection import learning_curve
+
+# Calculer la courbe d'apprentissage
+train_sizes, train_scores, test_scores = learning_curve(
+    RandomForestClassifier(n_estimators=200, max_depth=12, min_samples_leaf=2, random_state=42, n_jobs=-1),
+    features,
+    cible,
+    train_sizes=np.linspace(0.1, 1.0, 10),  # De 10% à 100% des données
+    cv=5,                                    # Validation croisée 5 plis
+    scoring="accuracy",
+    n_jobs=-1,
+    random_state=42,
+)
+
+# Convertir accuracy en erreur (erreur = 1 - accuracy)
+train_errors_mean = (1 - train_scores.mean(axis=1)) * 100  # en %
+test_errors_mean = (1 - test_scores.mean(axis=1)) * 100
+train_errors_std = train_scores.std(axis=1) * 100
+test_errors_std = test_scores.std(axis=1) * 100
+
+# Créer le graphique
+fig, ax = plt.subplots(figsize=(12, 8))
+
+# Courbe erreur test (validation)
+ax.plot(
+    train_sizes, test_errors_mean,
+    "b-", linewidth=2.5, label="Erreur validation (test)", zorder=3
+)
+# Zone d'incertitude test
+ax.fill_between(
+    train_sizes,
+    test_errors_mean - test_errors_std,
+    test_errors_mean + test_errors_std,
+    alpha=0.15, color="blue"
+)
+
+# Courbe erreur entraînement
+ax.plot(
+    train_sizes, train_errors_mean,
+    "b--", linewidth=2.5, label="Erreur entraînement (train)", zorder=3
+)
+# Zone d'incertitude train
+ax.fill_between(
+    train_sizes,
+    train_errors_mean - train_errors_std,
+    train_errors_mean + train_errors_std,
+    alpha=0.1, color="blue"
+)
+
+# Ligne de référence (meilleure erreur)
+min_error = min(test_errors_mean)
+ax.axhline(
+    y=min_error, color="gray", linestyle=":", linewidth=1.5,
+    label=f"Meilleure erreur atteinte ({min_error:.1f}%)"
+)
+
+# Mise en forme
+ax.set_xlabel("Taille du jeu d'entraînement (nombre de services)", fontsize=12, fontweight='bold')
+ax.set_ylabel("Erreur (%)", fontsize=12, fontweight='bold')
+ax.set_title("Courbe d'apprentissage — Random Forest\nAttribution des voyages bus",
+             fontsize=14, fontweight="bold", pad=20)
+ax.legend(fontsize=11, loc="upper right")
+ax.grid(True, alpha=0.3)
+ax.set_ylim(bottom=0)
+
+# Annotation convergence
+last_idx = -1
+ax.annotate(
+    f"Convergence\n~{test_errors_mean[last_idx]:.1f}% erreur",
+    xy=(train_sizes[last_idx], test_errors_mean[last_idx]),
+    xytext=(train_sizes[last_idx] - len(df_services) * 0.25, test_errors_mean[last_idx] + 5),
+    fontsize=10, color="darkblue", fontweight='bold',
+    arrowprops=dict(arrowstyle="->", color="darkblue", lw=1.5),
+)
+
+plt.tight_layout()
+plt.savefig("learning_curve_services.png", dpi=150, bbox_inches="tight")
+print("\n✅ Graphique sauvegardé : learning_curve_services.png")
+
+# Interprétation automatique
+print("\n📖 Comment lire ce graphique :")
+print(f"   • Avec peu de données, l'erreur de test est élevée (~{test_errors_mean[0]:.0f}%)")
+print(f"   • Plus on ajoute de données, plus l'erreur baisse")
+print(f"   • L'erreur se stabilise autour de {test_errors_mean[-1]:.1f}%")
+
+ecart_final = test_errors_mean[-1] - train_errors_mean[-1]
+if ecart_final > 5:
+    print(f"   • L'écart train/test reste de {ecart_final:.1f}% → le modèle overfitte encore")
+    print(f"     💡 Solutions : plus de données, réduire max_depth, ou augmenter min_samples_leaf")
+elif ecart_final > 2:
+    print(f"   • L'écart train/test est de {ecart_final:.1f}% → léger overfitting, acceptable")
+else:
+    print(f"   • L'écart train/test est faible ({ecart_final:.1f}%) → bon équilibre !")
+
+# Vérifier si la courbe descend encore
+if len(test_errors_mean) >= 3:
+    pente = test_errors_mean[-1] - test_errors_mean[-3]
+    if pente < -1:
+        print(f"   • La courbe descend encore → ajouter des données pourrait améliorer le modèle")
+    else:
+        print(f"   • La courbe est stable → ajouter des données n'améliorera pas beaucoup le modèle")
+
+
+# =============================================
 # RÉSUMÉ
 # =============================================
 
@@ -716,7 +911,7 @@ print(f"""
 📊 Données analysées :
    • {len(df_voyages)} voyages au total
    • {len(df_services)} services uniques
-   • {df_services['num_ligne'].nunique()} lignes différentes
+   • {df_services['ligne_principale'].nunique()} lignes différentes
    • {df_services['depot'].nunique()} dépôts
 
 🎯 Performance du modèle :
