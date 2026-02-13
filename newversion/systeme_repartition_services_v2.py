@@ -387,10 +387,10 @@ def generer_donnees_exemple():
 
 
 # Option 2 : Charger vos vraies données (décommentez et modifiez)
-# df_voyages = charger_donnees_voyages("mes_donnees.xlsx", nom_feuille=0)
+df_voyages = charger_donnees_voyages("template_donnees_voyages_v2.xlsx", nom_feuille=0)
 
 # Pour l'exemple, on génère des données
-df_voyages = generer_donnees_exemple()
+#df_voyages = generer_donnees_exemple()
 
 # IMPORTANT : Convertir les heures en minutes pour les données d'exemple
 df_voyages['heure_debut_min'] = df_voyages['heure_debut'].apply(heure_to_minutes)
