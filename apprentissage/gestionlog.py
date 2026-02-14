@@ -29,8 +29,8 @@ logger = logging.getLogger('todo_app')
 logger.setLevel(logging.DEBUG)
 
 # Handler pour fichier
-file_handler = logging.FileHandler('todo_app.log', encoding='utf-8')
-file_handler.setLevel(logging.INFO)
+timed_handler = logging.FileHandler('todo_app.log', encoding='utf-8')
+timed_handler.setLevel(logging.INFO)
 
 # Handler pour console
 console_handler = logging.StreamHandler()
@@ -38,11 +38,11 @@ console_handler.setLevel(logging.INFO)
 
 # Format
 formatter = logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s')
-file_handler.setFormatter(formatter)
+timed_handler.setFormatter(formatter)
 console_handler.setFormatter(formatter)
 
 # Ajouter les handlers
-logger.addHandler(file_handler)
+logger.addHandler(timed_handler)
 logger.addHandler(console_handler)
 
 
