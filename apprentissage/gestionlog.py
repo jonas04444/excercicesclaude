@@ -78,10 +78,12 @@ class TaskManager:
             'completed': False
         }
         # TODO 4 : Ajoutez un log INFO avec l'ID et la description
-        logger.info(self.tasks.description)
+        logger.info(f"Tâche ajoutée - ID: {self.task_id}, Description: '{description}'")
         # TODO 5 : Ajoutez un log DEBUG avec le nombre total de tâches
-        logger.debug(self.tasks[self.task_id])
+        logger.debug(f"Nombre total de tâches: {len(self.tasks)}")
         return self.task_id
+
+
 
     def complete_task(self, task_id):
         """Marque une tâche comme complétée"""
