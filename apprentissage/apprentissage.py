@@ -65,8 +65,8 @@ def minutes_to_heure(minutes):
         825 → "13:45"
     """
     # TODO : Écrivez votre code ici
-    h = 0  # À remplacer
-    m = 0  # À remplacer
+    h = int(minutes) //60  # À remplacer
+    m = int(minutes) %60  # À remplacer
     return f"{h:02d}:{m:02d}"
 
 
@@ -102,7 +102,7 @@ def calculer_duree_voyage(heure_debut, heure_fin):
     fin_min = heure_to_minutes(heure_fin)
 
     # TODO : Calculez la différence
-    duree = 0  # À remplacer
+    duree = fin_min - debut_min  # À remplacer
 
     return duree
 
@@ -147,6 +147,10 @@ def a_une_coupure(heures_debut, heures_fin, seuil=90):
     Returns:
         True si coupure détectée, False sinon
     """
+    for i in range(len(heures_fin) - 1):
+        coupure = heures_debut[i+1] - heures_fin[i]
+        if coupure > seuil:
+            return True
     # TODO : Complétez cette fonction
 
     # Indice 1 : Bouclez de 0 à len(heures_fin)-1
