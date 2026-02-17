@@ -194,7 +194,7 @@ print("─" * 80)
 
 
 def trouver_duree_coupure(heures_debut, heures_fin, seuil=90):
-    """TODO : Retournez la durée de la plus grande coupure
+    """Retournez la durée de la plus grande coupure
 
     Returns:
         duree: int (0 si pas de coupure)
@@ -204,8 +204,10 @@ def trouver_duree_coupure(heures_debut, heures_fin, seuil=90):
 
     max_ecart = 0
 
-    # Votre code ici
-
+    for i in range(len(heures_fin) - 1):
+        ecart = heures_debut[i + 1] - heures_fin[i]
+        if ecart > max_ecart:
+            max_ecart = ecart
     return max_ecart if max_ecart > seuil else 0
 
 
