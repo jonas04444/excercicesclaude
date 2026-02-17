@@ -251,7 +251,8 @@ def est_service_matin(heure_debut, heure_fin):
 
     # Votre code ici
 
-    return False
+
+    return heure_fin <= MIDI
 
 
 # Tests
@@ -293,9 +294,12 @@ def classifier_service(heure_debut, heure_fin, a_coupure=False):
     if a_coupure:
         return "COUPE"
 
-    # Votre code ici
-
-    return "JOURNEE"
+    if heure_fin <= MIDI:
+        return "MATIN"
+    elif heure_debut >= MIDI:
+        return "APREM"
+    else:
+        return "JOURNEE"
 
 
 # Tests
