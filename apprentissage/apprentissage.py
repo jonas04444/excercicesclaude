@@ -340,8 +340,11 @@ print("─" * 80)
 # - heure_fin : "6:30", "7:05", "7:40", "13:30", "14:05"
 
 # Votre code ici :
+
 df_voyages = pd.DataFrame({
-    # TODO : Complétez
+    'num_service': ["S001", "S001", "S001", "S002", "S002"],
+    'heure_debut': ["6:00", "6:35", "7:10", "13:00", "13:35"],
+    'heure_fin': ["6:30", "7:05", "7:40", "13:30", "14:05"]
 })
 
 print("DataFrame créé :")
@@ -357,7 +360,7 @@ print("─" * 80)
 # Indice : df_voyages.groupby('num_service').size()
 
 # Votre code ici :
-nb_voyages_par_service = None  # À remplacer
+nb_voyages_par_service = df_voyages.groupby('num_service').size()
 
 print("Nombre de voyages par service :")
 print(nb_voyages_par_service)
@@ -373,6 +376,8 @@ print("─" * 80)
 
 # Votre code ici :
 # df_voyages['heure_debut_min'] = ...
+df_voyages['heure_debut_min'] = df_voyages['heure_debut'].apply(heure_to_minutes)
+df_voyages['heure_fin_min'] = df_voyages['heure_fin'].apply(heure_to_minutes)
 
 print("DataFrame avec conversion :")
 print(df_voyages)
