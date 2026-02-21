@@ -2,18 +2,19 @@ from objet import voyage
 import random
 
 
-def optimiser_services(voyages_list, services_list, max_solutions=5, pause_min=5):  # ✅ Ajouter pause_min
+def optimiser_services(voyages_list, services_list, max_solutions=5, pause_min=5, verbose = True):  # ✅ Ajouter pause_min
     """
     Algorithme glouton générant plusieurs solutions
     SANS OR-Tools (stable et rapide)
     """
-
-    print(f"🔧 Début optimisation glouton (pause_min = {pause_min} min)")
-    print(f"   Voyages: {len(voyages_list)}")
-    print(f"   Services: {len(services_list)}")
+    if verbose:
+        print(f"🔧 Début optimisation glouton (pause_min = {pause_min} min)")
+        print(f"   Voyages: {len(voyages_list)}")
+        print(f"   Services: {len(services_list)}")
 
     if not voyages_list or not services_list:
-        print("❌ Pas de voyages ou services")
+        if verbose:
+            print("❌ Pas de voyages ou services")
         return []
 
     solutions = []
@@ -28,7 +29,8 @@ def optimiser_services(voyages_list, services_list, max_solutions=5, pause_min=5
     ]
 
     for strat_idx, (strat_nom, strat_tri) in enumerate(strategies[:max_solutions]):
-        print(f"\n🎯 Génération solution {strat_idx + 1} ({strat_nom})...")
+        if verbose:
+            print(f"\n🎯 Génération solution {strat_idx + 1} ({strat_nom})...")
 
         solution = generer_solution_gloutonne(
             voyages_list,
@@ -40,8 +42,8 @@ def optimiser_services(voyages_list, services_list, max_solutions=5, pause_min=5
 
         if solution:
             solutions.append(solution)
-
-    print(f"\n✅ {len(solutions)} solution(s) générée(s)")
+    if verbose:
+        print(f"\n✅ {len(solutions)} solution(s) générée(s)")
     return solutions
 
 
