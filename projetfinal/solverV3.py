@@ -1,5 +1,3 @@
-from newversion.solverv2 import generer_solution_gloutonne
-from objet import *
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
@@ -42,7 +40,7 @@ def optimiser_services(voyages_list, services_list, max_solutions=6, pause_min=5
         print(f"\n{len(solutions)} solutions trouvée")
     return solutions
 
-def generer_solutio_gloutonne(voyages_list, services_list, tri_func, nom_strategie, pause_min=5, verbose=True):
+def generer_solution_gloutonne(voyages_list, services_list, tri_func, nom_strategie, pause_min=5, verbose=True):
 
     services_info = []
     for idx, (service, indices_assignes) in enumerate(services_list):
@@ -122,3 +120,47 @@ def generer_solutio_gloutonne(voyages_list, services_list, tri_func, nom_strateg
                 else:
                     score += 10
 
+                voyages_apres = [ v for v in serv_info['voyages']
+                                  if voy.hfin + pause_min <=['voyage_obj'].hdebut]
+                if voyages_apres:
+                    prochain = min(voyages_apres, key=lambda v: v['voyage_obj'].hdebut)
+                    try:
+                        if voy.arret_fin_id() == prochain['voyage_obj'].arret_debut_id():
+                            score += 100
+                    except:
+                        pass
+
+                score -= len(serv_info['voyages']) * 5
+
+                if score > meilleur_score:
+                    meilleur_score = score
+                    meilleure_service = serv_info
+
+            if meilleure_service:
+                meilleure_service['voyages'].append({
+                    'index': v_idx,
+                    'voyage_obj': voy,
+                    'fixe': False
+                })
+                voy_info['assignes'] = True
+
+            else:
+                nb_non_assignes += 1
+
+        for serv_info in services_info:
+            serv_info['voyages'].sort(key=lambda v: v['voyage_obj'].hdebut)
+
+        solution = {
+            "services": {},
+            "strategies": nom_strategie,
+            "nb_non_assigned": nb_non_assignes
+        }
+
+        for serv_info in services_info:
+            solution['services'][serv_info['idx']] = serv_info['voyages']
+
+        total_assignes = sum(len(s['voyages']) for s in services_info)
+        if verbose:
+            print(f" Assignés = {total_assignes}/{len(services_info)} ({nb_non_assignes} non assigned)")
+
+        return solution
