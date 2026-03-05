@@ -187,8 +187,9 @@ class voyage:
 
 
 class proposition:
-    def __init__(self):
+    def __init__(self, num_proposition=None):
         self.service = []
+        self.num_proposition = num_proposition
 
     def ajout_service(self, service):
         self.service.append(service)

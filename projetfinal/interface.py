@@ -2021,7 +2021,7 @@ class MainWindow(QMainWindow):
 
     def optimiser_services(self):
         """Lance l'optimisation des services"""
-        from solver_bus import optimiser_services
+        from solver_bus2 import optimiser_services
 
         pause_min = self.get_pause_min()
 
@@ -2116,9 +2116,13 @@ class MainWindow(QMainWindow):
 
             for service_id, voyages_list in solution["services"].items():
                 if service_id >= len(self.timeline.services):
-                    print(f"   ⚠️ Service {service_id} n'existe plus, skip")
-                    continue
-
+                    # Le solver a créé plus de services que la GUI n'en a → on les ajoute
+                    nouveau = service_agent(
+                        num_service=str(service_id + 1),
+                        type_service="matin"
+                    )
+                    self.timeline.services.append(nouveau)
+                    print(f"   ➕ Nouveau service {service_id + 1} ajouté depuis le solver")
                 service = self.timeline.services[service_id]
 
                 for voy_data in voyages_list:

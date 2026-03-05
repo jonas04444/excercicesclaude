@@ -1,194 +1,227 @@
-from objet import voyage
-import random
+# solver_bus.py
+from objet import voyage, service_agent, proposition
 
 
-def optimiser_services(voyages_list, services_list, max_solutions=5, pause_min=5, verbose = True):  # ✅ Ajouter pause_min
-    """
-    Algorithme glouton générant plusieurs solutions
-    SANS OR-Tools (stable et rapide)
-    """
-    if verbose:
-        print(f"🔧 Début optimisation glouton (pause_min = {pause_min} min)")
-        print(f"   Voyages: {len(voyages_list)}")
-        print(f"   Services: {len(services_list)}")
+# ── Fonctions du solver (inchangées) ─────────────────────────────────────────
 
-    if not voyages_list or not services_list:
-        if verbose:
-            print("❌ Pas de voyages ou services")
-        return []
-
-    solutions = []
-
-    # Générer plusieurs solutions avec différentes stratégies
-    strategies = [
-        ("Par heure de début", lambda v: v['voyage'].hdebut),
-        ("Par durée", lambda v: v['voyage'].hfin - v['voyage'].hdebut),
-        ("Par heure de fin", lambda v: v['voyage'].hfin),
-        ("Par ligne puis heure", lambda v: (v['voyage'].num_ligne, v['voyage'].hdebut)),
-        ("Ordre inversé", lambda v: -v['voyage'].hdebut),
-    ]
-
-    for strat_idx, (strat_nom, strat_tri) in enumerate(strategies[:max_solutions]):
-        if verbose:
-            print(f"\n🎯 Génération solution {strat_idx + 1} ({strat_nom})...")
-
-        solution = generer_solution_gloutonne(
-            voyages_list,
-            services_list,
-            strat_tri,
-            strat_nom,
-            pause_min  # ✅ Passer pause_min
-        )
-
-        if solution:
-            solutions.append(solution)
-    if verbose:
-        print(f"\n✅ {len(solutions)} solution(s) générée(s)")
-    return solutions
+def voyage_compatible(service, nouveau_voyage, min_pause, max_pause):
+    for v in service.get_voyages():
+        if not (nouveau_voyage.hfin <= v.hdebut or nouveau_voyage.hdebut >= v.hfin):
+            return False
+    voyages_tries = sorted(service.get_voyages() + [nouveau_voyage], key=lambda v: v.hdebut)
+    idx = voyages_tries.index(nouveau_voyage)
+    if idx > 0:
+        pause = nouveau_voyage.hdebut - voyages_tries[idx - 1].hfin
+        if not (min_pause <= pause <= max_pause):
+            return False
+    if idx < len(voyages_tries) - 1:
+        pause = voyages_tries[idx + 1].hdebut - nouveau_voyage.hfin
+        if not (min_pause <= pause <= max_pause):
+            return False
+    return True
 
 
-def generer_solution_gloutonne(voyages_list, services_list, tri_func, nom_strategie, pause_min=5):
-    """
-    Génère UNE solution avec une stratégie de tri donnée
-    """
+def creer_service(num, voy, petit=False):
+    type_s = "matin" if voy.hdebut <= 600 else "après-midi"
+    s = service_agent(num_service=num, type_service=type_s)
+    s.petit_service = petit
+    return s
 
-    # Extraire les services
-    services_info = []
-    for idx, (service, indices_assignes) in enumerate(services_list):
-        services_info.append({
-            'id': idx,
-            'debut': service.heure_debut,
-            'fin': service.heure_fin,
-            'voyages_assignes': list(indices_assignes),
-            'voyages': []
-        })
 
-    # Créer liste des voyages
-    voyages_avec_index = []
-    for idx, voy in enumerate(voyages_list):
-        voyages_avec_index.append({
-            'index': idx,
-            'voyage': voy,
-            'assigne': False
-        })
+def peut_ajouter_lignes(service, voy, voy2, nb_max_lignes):
+    lignes = set(v.num_ligne for v in service.get_voyages())
+    lignes.add(voy.num_ligne)
+    lignes.add(voy2.num_ligne)
+    return len(lignes) <= nb_max_lignes
 
-    # Pré-assigner les voyages fixés
-    for serv_info in services_info:
-        for v_idx in serv_info['voyages_assignes']:
-            if v_idx < len(voyages_avec_index):
-                voy_info = voyages_avec_index[v_idx]
-                serv_info['voyages'].append({
-                    'index': v_idx,
-                    'voyage_obj': voy_info['voyage'],
-                    'fixe': True
-                })
-                voy_info['assigne'] = True
 
-    # Trier les voyages non assignés selon la stratégie
-    voyages_non_assignes = [v for v in voyages_avec_index if not v['assigne']]
-    try:
-        voyages_non_assignes.sort(key=tri_func)
-    except:
-        voyages_non_assignes.sort(key=lambda v: v['voyage'].hdebut)
+def verifier_duree_service(service, min_duree, max_duree):
+    duree = service.duree_travail_effective()
+    if duree < min_duree:
+        return False, f"Trop court : {duree} min"
+    if duree > max_duree:
+        return False, f"Trop long : {duree} min"
+    return True, f"OK : {duree} min"
 
-    # Algorithme glouton
-    nb_non_assignes = 0
-    for voy_info in voyages_non_assignes:
-        voy = voy_info['voyage']
-        v_idx = voy_info['index']
 
-        # Chercher le meilleur service
-        meilleur_service = None
-        meilleur_score = -1
+def tous_services_duree_valide(propo, min_duree, max_duree):
+    for s in propo.service:
+        if s.get_voyages() and not s.petit_service:
+            valide, _ = verifier_duree_service(s, min_duree, max_duree)
+            if not valide:
+                return False
+    return True
 
-        for serv_info in services_info:
-            # Vérifier limites horaires
-            if voy.hdebut < serv_info['debut'] or voy.hfin > serv_info['fin']:
-                continue
-            service_original = services_list[serv_info['id']][0]
-            if hasattr(service_original, 'pauses') and service_original.est_dans_pause(voy.hdebut, voy.hfin):
-                continue
 
-            # Vérifier chevauchements
-            compatible = True
-            for v_existant in serv_info['voyages']:
-                v_exist = v_existant['voyage_obj']
+def petits_services_valides(propo, max_duree_petit=4 * 60):
+    for s in propo.service:
+        if s.get_voyages() and s.petit_service:
+            if s.duree_travail_effective() > max_duree_petit:
+                return False
+    return True
 
-                # ✅ Utiliser pause_min au lieu de PAUSE_MIN
-                if not (voy.hfin + pause_min <= v_exist.hdebut or
-                        voy.hdebut >= v_exist.hfin + pause_min):
-                    compatible = False
+
+def essayer_proposition(voyages, min_pause, max_pause, nb_max_lignes, max_services, num_proposition):
+    for v in voyages:
+        v.assigned = False
+
+    propo = proposition(num_proposition=num_proposition)
+    service_cible = creer_service(1, voyages[0])
+    propo.ajout_service(service_cible)
+
+    min_duree = 6 * 60
+    max_duree = 8 * 60 + 30
+
+    for i in range(len(voyages)):
+        for j in range(i + 1, len(voyages)):
+            voy = voyages[i]
+            voy2 = voyages[j]
+            pause_entre = voy2.hdebut - voy.hfin
+
+            if (voy.hdebut <= voy2.hfin
+                    and voy.hfin <= voy2.hdebut
+                    and voy.arret_fin == voy2.arret_debut
+                    and not voy.assigned
+                    and not voy2.assigned
+                    and min_pause <= pause_entre <= max_pause):
+
+                service_cible = None
+                for s in propo.service:
+                    if s.petit_service:
+                        continue
+                    tous_voyages = s.get_voyages() + [voy, voy2]
+                    debut_simule = min(v.hdebut for v in tous_voyages)
+                    fin_simulee = max(v.hfin for v in tous_voyages)
+                    duree_simulee = fin_simulee - debut_simule
+                    if (voyage_compatible(s, voy, min_pause, max_pause)
+                            and voyage_compatible(s, voy2, min_pause, max_pause)
+                            and peut_ajouter_lignes(s, voy, voy2, nb_max_lignes)
+                            and min_duree <= duree_simulee <= max_duree):
+                        service_cible = s
+                        break
+
+                if service_cible is None:
+                    if len(propo.service) >= max_services:
+                        break
+                    duree_paire = voy2.hfin - voy.hdebut
+                    if not (min_duree <= duree_paire <= max_duree):
+                        break
+                    service_cible = creer_service(len(propo.service) + 1, voy, petit=False)
+                    propo.ajout_service(service_cible)
+
+                if service_cible is None:
                     break
 
-            if not compatible:
+                service_cible.ajouter_voyage(voy)
+                service_cible.ajouter_voyage(voy2)
+                voy.assigned = True
+                voy2.assigned = True
+                break
+
+    max_duree_petit = 4 * 60
+    for voy in [v for v in voyages if not v.assigned]:
+        service_cible = None
+        for s in propo.service:
+            if not s.petit_service:
                 continue
+            tous_voyages = s.get_voyages() + [voy]
+            debut_simule = min(v.hdebut for v in tous_voyages)
+            fin_simulee = max(v.hfin for v in tous_voyages)
+            duree_simulee = fin_simulee - debut_simule
+            if (voyage_compatible(s, voy, min_pause, max_pause)
+                    and peut_ajouter_lignes(s, voy, voy, nb_max_lignes)
+                    and duree_simulee <= max_duree_petit):
+                service_cible = s
+                break
+        if service_cible is None:
+            if len(propo.service) >= max_services:
+                continue
+            service_cible = creer_service(len(propo.service) + 1, voy, petit=True)
+            propo.ajout_service(service_cible)
+        service_cible.ajouter_voyage(voy)
+        voy.assigned = True
 
-            # Calculer score (préférer services avec continuité géo)
-            score = 0
+    return propo
 
-            # Voyages avant - ✅ Utiliser pause_min
-            voyages_avant = [v for v in serv_info['voyages']
-                             if v['voyage_obj'].hfin + pause_min <= voy.hdebut]
 
-            if voyages_avant:
-                dernier = max(voyages_avant, key=lambda v: v['voyage_obj'].hfin)
-                try:
-                    if dernier['voyage_obj'].arret_fin_id() == voy.arret_debut_id():
-                        score += 100  # Bonus continuité
-                except:
-                    pass
+# ── Fonction appelée par l'interface ─────────────────────────────────────────
 
-                # Bonus proximité temporelle
-                temps_attente = voy.hdebut - dernier['voyage_obj'].hfin
-                score += max(0, 50 - temps_attente)
-            else:
-                score += 10  # Premier voyage du service
+def optimiser_services(voyages_list, services_data, max_solutions=5, pause_min=15):
+    """
+    Appelée par MainWindow.optimiser_services()
+    Retourne une liste de solutions au format attendu par l'interface.
+    """
+    min_pause = pause_min
+    max_pause = 60
+    nb_max_lignes = 1
+    max_services = 10
+    cible_duree = 7 * 60 + 15
+    variation = 0
 
-            # Voyages après - ✅ Utiliser pause_min
-            voyages_apres = [v for v in serv_info['voyages']
-                             if voy.hfin + pause_min <= v['voyage_obj'].hdebut]
+    propositions_trouvees = []
+    num_proposition = 1
+    max_iterations = 200  # garde-fou contre boucle infinie
 
-            if voyages_apres:
-                prochain = min(voyages_apres, key=lambda v: v['voyage_obj'].hdebut)
-                try:
-                    if voy.arret_fin_id() == prochain['voyage_obj'].arret_debut_id():
-                        score += 100  # Bonus continuité
-                except:
-                    pass
+    while len(propositions_trouvees) < max_solutions and max_iterations > 0:
+        max_iterations -= 1
 
-            # Pénalité si le service a déjà beaucoup de voyages
-            score -= len(serv_info['voyages']) * 5
+        min_duree_service = max(360, cible_duree - variation)
+        max_duree_service = min(510, cible_duree + variation)
 
-            if score > meilleur_score:
-                meilleur_score = score
-                meilleur_service = serv_info
+        propo = essayer_proposition(
+            voyages_list, min_pause, max_pause,
+            nb_max_lignes, max_services, num_proposition
+        )
 
-        # Assigner au meilleur service
-        if meilleur_service:
-            meilleur_service['voyages'].append({
-                'index': v_idx,
-                'voyage_obj': voy,
-                'fixe': False
-            })
-            voy_info['assigne'] = True
+        voyages_non_assignes = [v for v in voyages_list if not v.assigned]
+
+        if (not voyages_non_assignes
+                and tous_services_duree_valide(propo, min_duree_service, max_duree_service)
+                and petits_services_valides(propo)):
+            propositions_trouvees.append(propo)
+            num_proposition += 1
+            variation += 15
         else:
-            nb_non_assignes += 1
+            variation += 15
+            if min_pause > 0:
+                min_pause = max(0, min_pause - 5)
+            elif max_pause < 120:
+                max_pause += 15
+            elif nb_max_lignes < 4:
+                nb_max_lignes += 1
+            elif max_services < 15:
+                max_services += 1
+            else:
+                break
 
-    # Trier les voyages de chaque service
-    for serv_info in services_info:
-        serv_info['voyages'].sort(key=lambda v: v['voyage_obj'].hdebut)
+    # ── Convertir au format attendu par l'interface ───────────────────────────
+    solutions = []
+    for propo in propositions_trouvees:
+        services_dict = {}
+        nb_non_assignes = len([v for v in voyages_list if not getattr(v, 'assigned', False)])
 
-    # Créer la solution
-    solution = {
-        "services": {},
-        "strategie": nom_strategie,
-        "nb_non_assignes": nb_non_assignes
-    }
+        for service_idx, s in enumerate(propo.service):
+            if not s.get_voyages():
+                continue  # ignorer les services vides
 
-    for serv_info in services_info:
-        solution["services"][serv_info['id']] = serv_info['voyages']
+            voyages_in_service = []
+            for voy in s.get_voyages():
+                try:
+                    voy_idx = voyages_list.index(voy)
+                except ValueError:
+                    voy_idx = -1
+                voyages_in_service.append({
+                    "voyage_obj": voy,
+                    "fixe": False,
+                    "index": voy_idx
+                })
+            services_dict[service_idx] = voyages_in_service
 
-    total_assignes = sum(len(s['voyages']) for s in services_info)
-    print(f"   Assignés: {total_assignes}/{len(voyages_list)} ({nb_non_assignes} non assignés)")
+        solutions.append({
+            "strategie": f"Proposition {propo.num_proposition}",
+            "nb_non_assignes": nb_non_assignes,
+            "services": services_dict,
+            "_propo": propo  # référence brute si besoin
+        })
 
-    return solution
+    return solutions
