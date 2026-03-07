@@ -102,10 +102,10 @@ def essayer_proposition(voyages, min_pause, max_pause, nb_max_lignes, max_servic
 
                 if service_cible is None:
                     if len(propo.service) >= max_services:
-                        break
+                        continue
                     duree_paire = voy2.hfin - voy.hdebut
                     if not (min_duree <= duree_paire <= max_duree):
-                        break
+                        continue
                     service_cible = creer_service(len(propo.service) + 1, voy, petit=False)
                     propo.ajout_service(service_cible)
 
