@@ -563,8 +563,25 @@ class PanneauGauche(QFrame):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             services_data = dialog.get_services_a_creer()
 
+            nb_services_ajoutes = 0
+            nb_voyages_ajoutes = 0
+            nb_doublons_voyages = 0
+            nb_doublons_services = 0
+
             for service_data in services_data:
-                # Créer le service_agent
+
+                # ← Vérifier si un service avec ce nom existe déjà
+                nom_nouveau = service_data['num_service']
+                service_existant = next(
+                    (s for s in self.timeline.services if s.num_service == nom_nouveau),
+                    None
+                )
+
+                if service_existant is not None:
+                    nb_doublons_services += 1
+                    continue  # ← on saute ce service entièrement
+
+                # Créer le service
                 service = service_agent(
                     num_service=service_data['num_service'],
                     type_service=service_data['type_service']
@@ -574,6 +591,18 @@ class PanneauGauche(QFrame):
 
                 # Créer et ajouter les voyages
                 for voy_data in service_data['voyages']:
+
+                    # ← Vérifier doublon dans voyages_importes
+                    existe = any(
+                        v.num_ligne == voy_data['num_ligne'] and
+                        v.num_voyage == voy_data['num_voyage'] and
+                        v.hdebut == voy_data['hdebut']
+                        for v in self.voyages_importes
+                    )
+                    if existe:
+                        nb_doublons_voyages += 1
+                        continue  # ← on saute ce voyage
+
                     voy = voyage(
                         num_ligne=voy_data['num_ligne'],
                         num_voyage=voy_data['num_voyage'],
@@ -589,18 +618,25 @@ class PanneauGauche(QFrame):
 
                     service.voyages.append(voy)
                     self.voyages_importes.append(voy)
+                    nb_voyages_ajoutes += 1
 
-                # Ajouter le service à la timeline
-                self.timeline.ajouter_service(service)
+                # N'ajouter le service que s'il contient des voyages
+                if service.voyages:
+                    self.timeline.ajouter_service(service)
+                    nb_services_ajoutes += 1
 
             # Rafraîchir l'interface
             self.refresh_table_importes()
             self.refresh_combo_services()
 
-            QMessageBox.information(
-                self, "Import réussi",
-                f"{len(services_data)} service(s) créé(s) avec leurs voyages !"
-            )
+            # Message de résumé
+            msg = f"{nb_services_ajoutes} service(s) et {nb_voyages_ajoutes} voyage(s) ajouté(s)"
+            if nb_doublons_services > 0:
+                msg += f"\n({nb_doublons_services} service(s) ignoré(s) car déjà existant(s))"
+            if nb_doublons_voyages > 0:
+                msg += f"\n({nb_doublons_voyages} voyage(s) en doublon ignoré(s))"
+
+            QMessageBox.information(self, "Import réussi", msg)
 
     def ajouter_hlp(self):
         """Ajoute un HLP au service sélectionné"""
@@ -2021,7 +2057,7 @@ class MainWindow(QMainWindow):
 
     def optimiser_services(self):
         """Lance l'optimisation des services"""
-        from solver_bus2 import optimiser_services
+        from solver_bus import optimiser_services
 
         pause_min = self.get_pause_min()
 
