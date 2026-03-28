@@ -2019,6 +2019,7 @@ class MainWindow(QMainWindow):
             QSpinBox {
                 padding: 5px;
                 font-weight: bold;
+                color: #2c3e50;
                 background-color: #fff3cd;
                 border: 2px solid #f39c12;
                 border-radius: 4px;
