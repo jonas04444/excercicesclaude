@@ -4,6 +4,7 @@ Utilise les classes de objet.py (voyage, service_agent, hlp, proposition)
 """
 
 import sys
+import re
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -63,26 +64,30 @@ class VoyageGraphique(QGraphicsRectItem):
             nom = "HLP"
         else:
             couleur = QColor(getattr(voyage_obj, 'couleur', '#3498db'))
-            # ✅ MODIFIÉ : Afficher seulement le numéro de ligne
-            nom = str(voyage_obj.num_ligne)
+            # Construire le label avec suffixe A (impair) ou R (pair)
+            try:
+                num_voy = int(voyage_obj.num_voyage)
+                suffixe = "A" if num_voy % 2 != 0 else "R"
+            except (ValueError, TypeError):
+                suffixe = ""
+
+            num_ligne_court = re.sub(r'^[A-Za-z]+', '', str(voyage_obj.num_ligne))
+            nom = f"{num_ligne_court}{suffixe}" if largeur > 8 else ""
 
         self.setBrush(QBrush(couleur))
         self.setPen(QPen(couleur.darker(120), 2))
 
         # Texte centré
         self.text_item = QGraphicsTextItem(nom, self)
-        self.text_item.setDefaultTextColor(Qt.GlobalColor.white)
+        self.text_item.setDefaultTextColor(QColor(255, 255, 255))
+        self.text_item.setFont(QFont("Arial", 5, QFont.Weight.Bold))
 
-        # ✅ Taille de police adaptative selon la largeur
-        font_size = 9 if largeur > 40 else 7
-        self.text_item.setFont(QFont("Arial", font_size, QFont.Weight.Bold))
-
-        # Centrer le texte
+        # Récupérer x_rect avant qu'il soit écrasé
+        rect_x = MARGE_GAUCHE + (heure_debut - HEURE_DEBUT) * pixels_par_heure
         text_rect = self.text_item.boundingRect()
-        self.text_item.setPos(
-            (largeur - text_rect.width()) / 2,
-            (hauteur - text_rect.height()) / 2
-        )
+        text_x = rect_x + max(1, (largeur - text_rect.width()) / 2)
+        text_y = y_pos + 5 + (hauteur - text_rect.height()) / 2
+        self.text_item.setPos(text_x, text_y)
 
         # Interactivité
         self.setAcceptHoverEvents(True)
